@@ -1,0 +1,29 @@
+[DEBUG][2023-08-30 14:42:42][cdn.py:114] - {"type": "WW_CDN_UPLOAD_MSG", "client_id": 1, "data": {"file_path": "C:\\Users\\mac\\Desktop\\xbot\\qrcode\\7881303479963959.jpg", "file_type": 1}}
+[DEBUG][2023-08-30 14:46:17][cdn.py:113] - {"type": "WW_CDN_UPLOAD_MSG", "client_id": 1, "data": {"file_path": "C:\\Users\\mac\\Desktop\\xbot\\qrcode\\7881303479963959.jpg", "file_type": 1}}
+[DEBUG][2023-08-30 14:46:49][cdn.py:114] - {"type": "WW_CDN_UPLOAD_MSG", "client_id": 1, "data": {"file_path": "C:\\Users\\mac\\Desktop\\xbot\\qrcode\\7881303479963959.jpg", "file_type": 1}, "is_sync": 1}
+[DEBUG][2023-08-30 14:46:57][send_message.py:177] - {"data": {"conversation_id": "S:1688856694537509_7881303479963959", "file_id": "3052020102044b30490201000204975abd2502030f42420204f663607a020464eee5e1040d3136393333373830303932373302010002030080e00410695a3807a27d58b38278b719a2fee41c0201010201000400", "file_name": "750x1250-1.jpg", "image_width": 405, "image_height": 405, "aes_key": "31643330306561313064353938356238", "md5": "695a3807a27d58b38278b719a2fee41c", "size": 32980}, "type": "WW_SEND_IMG_V2_MSG", "client_id": 1}
+[DEBUG][2023-08-30 14:46:57][send_message.py:182] - Error : {"err_code":0,"tips":"如需要数据返回，看文档-开发流程，搜 is_sync"}
+[DEBUG][2023-08-30 14:49:20][cdn.py:114] - {"type": "WW_CDN_UPLOAD_MSG", "client_id": 1, "data": {"file_path": "C:\\Users\\mac\\Desktop\\xbot\\qrcode\\7881303479963959.jpg", "file_type": 1}, "is_sync": 1}
+[DEBUG][2023-08-30 14:49:28][send_message.py:151] - {"data": {"conversation_id": "S:1688856694537509_7881303479963959", "file_id": "3052020102044b30490201000204975abd2502030f42420204f663607a020464eee678040d3136393333373831363034303302010002030081c004105b051c7b616d00cfee2cefac5b14be990201010201000400", "file_name": "750x1250-1.jpg", "image_width": 405, "image_height": 405, "aes_key": "38306632316532313066653035373165", "md5": "5b051c7b616d00cfee2cefac5b14be99", "size": 33215}, "type": "WW_SEND_IMG_V2_MSG", "client_id": 1}
+[DEBUG][2023-08-30 14:49:28][send_message.py:156] - Error : {"err_code":0,"tips":"如需要数据返回，看文档-开发流程，搜 is_sync"}
+[ERROR][2023-09-04 20:00:42][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:00:46][wxpay.py:88] - make trade ,no:14321 amount:100
+[DEBUG][2023-09-04 20:00:47][wxpay.py:95] - {'code': 'PARAM_ERROR', 'detail': {'location': 'body', 'value': 5}, 'message': '输入源“/body/out_trade_no”映射到值字段“商户订单号”字符串规则校验失败，字节数 5，小于最小值 6'}
+[ERROR][2023-09-04 20:01:19][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:01:22][wxpay.py:88] - make trade ,no:14321 amount:100
+[DEBUG][2023-09-04 20:01:23][wxpay.py:95] - {'code': 'PARAM_ERROR', 'detail': {'location': 'body', 'value': 5}, 'message': '输入源“/body/out_trade_no”映射到值字段“商户订单号”字符串规则校验失败，字节数 5，小于最小值 6'}
+[ERROR][2023-09-04 20:01:40][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:01:43][wxpay.py:88] - make trade ,no:14321 amount:100
+[DEBUG][2023-09-04 20:01:44][wxpay.py:96] - {'code': 'PARAM_ERROR', 'detail': {'location': 'body', 'value': 5}, 'message': '输入源“/body/out_trade_no”映射到值字段“商户订单号”字符串规则校验失败，字节数 5，小于最小值 6'}
+[ERROR][2023-09-04 20:01:57][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:02:00][wxpay.py:88] - make trade ,no:14321111 amount:100
+[DEBUG][2023-09-04 20:02:02][wxpay.py:96] - {'code_url': 'weixin://wxpay/bizpayurl?pr=Hnk9vLMzz'}
+[ERROR][2023-09-04 20:02:19][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:02:22][wxpay.py:88] - make trade ,no:14321111 amount:1
+[DEBUG][2023-09-04 20:02:23][wxpay.py:96] - {'code': 'INVALID_REQUEST', 'message': '201 商户订单号重复'}
+[ERROR][2023-09-04 20:02:34][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:02:37][wxpay.py:88] - make trade ,no:14321112 amount:1
+[DEBUG][2023-09-04 20:02:39][wxpay.py:96] - {'code_url': 'weixin://wxpay/bizpayurl?pr=U5mIEY5zz'}
+[ERROR][2023-09-04 20:03:42][log.py:35] - SET LEVEL DEBUG: True
+[DEBUG][2023-09-04 20:03:45][wxpay.py:88] - make trade ,no:97c155d1b533cafe3d08bbbe53625136 amount:1
+[DEBUG][2023-09-04 20:03:47][wxpay.py:96] - {'code_url': 'weixin://wxpay/bizpayurl?pr=r8wVoiezz'}
