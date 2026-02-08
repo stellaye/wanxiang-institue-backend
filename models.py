@@ -59,7 +59,7 @@ if port == 3307:
 
 # 创建数据库实例
 database = PooledMySQLDatabase(
-    "databank",
+    "wanxiang",
     max_connections=1100,
     user="root",
     password="yrjdata@454784911",

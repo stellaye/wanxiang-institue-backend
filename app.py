@@ -103,14 +103,14 @@ class WechatLoginHandler(MainHandler):
             if target_user:
                 pass
             else:
-                new_user = User(unionid = unionid,mobile_openid = openid)
+                new_user = User(wechat_unionid = unionid,mobile_openid = openid)
                 await new_user.aio_save()
         else:
             target_user = await User.aio_get_or_none(User.web_openid == openid)
             if target_user:
                 pass
             else:
-                new_user = User(unionid = unionid,web_openid = openid)
+                new_user = User(wechat_unionid = unionid,web_openid = openid)
                 await new_user.aio_save()     
 
         # 第二步：用 access_token 获取用户信息
