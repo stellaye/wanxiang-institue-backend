@@ -52,7 +52,7 @@ TRANSFER_LIMITS = {
 }
 
 # 转账场景ID（需要根据实际场景设置）
-TRANSFER_SCENE_ID = '1001'  # 示例值，需要根据实际业务设置
+TRANSFER_SCENE_ID = '1005'  # 示例值，需要根据实际业务设置
 
 # 转账记录跟踪（用于控制限额）
 _transfer_records = {
@@ -262,7 +262,14 @@ def execute_single_transfer(openid, amount, out_bill_no=None, transfer_remark="�
             openid=openid,
             transfer_amount=transfer_amount,
             transfer_remark=transfer_remark,
-            user_name=user_name if amount >= 2000.00 else None  # 超过2000元才传user_name
+            user_name=user_name if amount >= 2000.00 else None,  # 超过2000元才传user_name,
+            transfer_scene_report_infos= [{
+    "info_type" :   "岗位类型",
+    "info_content" : "推广员"
+},{
+    "info_type" : "报酬说明",
+    "info_content" : "推广佣金"
+  }]
         )
         
         print(f"转账结果 - code: {code}, message: {message}")
@@ -517,7 +524,7 @@ if __name__ == '__main__':
     print("\n1. 测试小额转账（150元）:")
     success, result = transfer_to_openid(
         openid=OPENID,
-        amount="0.01",
+        amount="0.1",
         transfer_remark="测试小额转账"
     )
     print(f"结果: {'成功' if success else '失败'}")
