@@ -8,6 +8,7 @@ from string import ascii_letters, digits
 from math import ceil
 from datetime import datetime, timedelta
 from wechatpayv3 import SignType, WeChatPay, WeChatPayType
+import uuid
 
 # 多客户端配置（示例配置）
 CLIENTS_CONFIG = {
@@ -37,6 +38,30 @@ CLIENTS_CONFIG = {
 # 获取当前文件的绝对路径
 file_path = os.path.abspath(__file__)
 directory = os.path.dirname(file_path)
+
+
+def generate_out_bill_no():
+    """生成32位商户单号（无client_id）"""
+    # 格式：前缀 + 时间戳 + 随机字符串
+    
+    # 1. 前缀（固定2位，如"TF"）
+    prefix = "TF"
+    
+    # 2. 时间戳（毫秒级，13位数字）
+    timestamp_ms = str(int(time.time() * 1000))  # 13位
+    
+    # 3. 计算需要多少随机字符
+    # 总32 = 前缀2 + 时间戳13 + 随机串17
+    random_len = 32 - len(prefix) - len(timestamp_ms)
+    
+    # 4. 生成随机部分
+    random_part = get_random_string(random_len)
+    
+    # 5. 组合
+    out_bill_no = f"{prefix}{timestamp_ms}{random_part}"
+    
+    return out_bill_no
+
 
 # 加载每个客户端的私钥
 for client_id, config in CLIENTS_CONFIG.items():
@@ -324,7 +349,7 @@ def execute_single_transfer(client_id, openid, amount, out_bill_no=None,
         
         # 生成商户单号（如果未提供）
         if not out_bill_no:
-            out_bill_no = f"TF{client_id}_{int(time.time())}{get_random_string(8)}"
+            out_bill_no = generate_out_bill_no()
         
         # 转换金额为分
         transfer_amount = int(float(amount) * 100)

@@ -4,6 +4,7 @@ import json
 from logger import logger
 import tornado.httpclient  # 这是解决错误的关键
 from models import User
+from wxpay.wxpay import transfer_to_openid
 # 定义处理器
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
@@ -226,6 +227,22 @@ class WechatLoginHandler(MainHandler):
 
 
 
+class WithdrawHandler(MainHandler):
+
+    async def post(self):
+        body = json.loads(self.request.body) 
+        login_type = body.get("login_type")
+        openid = body.get("openid")
+        amount = body.get("amount")
+        if login_type == "mobile":
+            client_id = "mobile_app"
+        else:
+            client_id = "web_app"
+        transfer_to_openid(openid=openid,amount=amount,client_id=client_id)
+    
+
+    
+
 # 应用路由
 def make_app():
     return tornado.web.Application([
@@ -233,6 +250,7 @@ def make_app():
         (r"/api", APIHandler),
         (r"/user/([0-9]+)", UserHandler),  # 动态路由
         (r"/wanxiang/api/wechat/login", WechatLoginHandler),
+        (r"/wanxiang/api/withdraw", WithdrawHandler),
         (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": settings["static_path"]}),
     ], **settings)
 
