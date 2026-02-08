@@ -2,6 +2,8 @@ import tornado.ioloop
 import tornado.web
 import json
 from logger import logger
+import tornado.httpclient  # 这是解决错误的关键
+from models import User
 # 定义处理器
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
@@ -47,7 +49,7 @@ WX_MP_APP_ID = "wx_your_mp_appid"        # 服务号 appId
 WX_MP_APP_SECRET = "your_mp_secret"       # 服务号 appSecret
 
 WX_OPEN_APP_ID = "wxd642d4eeae08b232"    # 开放平台网站应用 appId（PC扫码用）
-WX_OPEN_APP_SECRET = "your_open_secret"   # 开放平台网站应用 appSecret
+WX_OPEN_APP_SECRET = "02a3d0bed716644e9d5253ac3ab175c8"   # 开放平台网站应用 appSecret
 
 
 class WechatLoginHandler(MainHandler):
@@ -96,9 +98,24 @@ class WechatLoginHandler(MainHandler):
         refresh_token = token_data.get("refresh_token", "")
         unionid = token_data.get("unionid", "")
         logger.info(f"Get Token info:{token_data}")
+        if login_type == "mobile":
+            target_user = await User.aio_get_or_none(User.mobile_openid == openid)
+            if target_user:
+                pass
+            else:
+                new_user = User(unionid = unionid,mobile_openid = openid)
+                await new_user.aio_save()
+        else:
+            target_user = await User.aio_get_or_none(User.web_openid == openid)
+            if target_user:
+                pass
+            else:
+                new_user = User(unionid = unionid,web_openid = openid)
+                await new_user.aio_save()     
 
         # 第二步：用 access_token 获取用户信息
         user_info = await self._get_user_info(access_token, openid)
+        logger.info(f"user_info:{user_info}")
         if not user_info or "errcode" in user_info:
             logger.error(f"获取用户信息失败: {user_info}")
             self.write_error_json("获取用户信息失败")
@@ -129,6 +146,7 @@ class WechatLoginHandler(MainHandler):
             f"&code={code}"
             f"&grant_type=authorization_code"
         )
+        logger.info(f"Url is :{url}")
         return await self._http_get(url)
 
 
