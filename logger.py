@@ -1,6 +1,5 @@
 import logging
 import logging.config
-import yaml
 import os
 from tornado.options import define, options
 
