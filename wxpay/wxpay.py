@@ -15,7 +15,7 @@ CLIENTS_CONFIG = {
     # 客户端1：主应用
     "web_app": {
         "name": "万象web",
-        "appid": 'wx50afdd19b43f590e',
+        "appid": 'wxd642d4eeae08b232',
         "mchid": '1648741001',
         "apiv3_key": '8ze4ou2eBmpnYbAYheThghA3ZDsv2Cgs',
         "private_key": None,  # 会在初始化时加载
@@ -25,7 +25,7 @@ CLIENTS_CONFIG = {
     # 客户端2：子应用1
     "mobile_app": {
         "name": "移动端",
-        "appid": 'wx1111111111111111',  # 替换为实际AppID
+        "appid": 'wx50afdd19b43f590e',  # 替换为实际AppID
         "mchid": '1648741001',
         "apiv3_key":  '8ze4ou2eBmpnYbAYheThghA3ZDsv2Cgs',
         "private_key": None,

@@ -5,6 +5,95 @@ from logger import logger
 import tornado.httpclient  # 这是解决错误的关键
 from models import User
 from wxpay.wxpay import transfer_to_openid
+import hashlib
+import time
+import string
+import random
+
+# 全局缓存 jsapi_ticket
+jsapi_ticket_cache = {"ticket": "", "expires_at": 0}
+
+class JsapiSignatureHandler(tornado.web.RequestHandler):
+    """微信JSSDK签名接口"""
+
+    async def post(self):
+        try:
+            body = json.loads(self.request.body)
+            url = body.get("url", "")
+
+            if not url:
+                self.write_json({"success": False, "msg": "缺少url参数"})
+                return
+
+            ticket = await self._get_jsapi_ticket()
+            if not ticket:
+                self.write_json({"success": False, "msg": "获取jsapi_ticket失败"})
+                return
+
+            nonce_str = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            timestamp = str(int(time.time()))
+
+            # 按字典序拼接签名字符串
+            sign_str = f"jsapi_ticket={ticket}&noncestr={nonce_str}&timestamp={timestamp}&url={url}"
+            signature = hashlib.sha1(sign_str.encode('utf-8')).hexdigest()
+
+            self.write_json({
+                "success": True,
+                "nonceStr": nonce_str,
+                "timestamp": timestamp,
+                "signature": signature,
+            })
+        except Exception as e:
+            logger.error(f"签名接口异常: {e}")
+            self.write_json({"success": False, "msg": str(e)})
+
+    async def _get_jsapi_ticket(self):
+        global jsapi_ticket_cache
+        now = time.time()
+
+        # 缓存有效直接返回
+        if jsapi_ticket_cache["ticket"] and jsapi_ticket_cache["expires_at"] > now:
+            return jsapi_ticket_cache["ticket"]
+
+        # 先获取 access_token（注意这里是公众号的普通access_token，不是OAuth的）
+        token_url = (
+            f"https://api.weixin.qq.com/cgi-bin/token"
+            f"?grant_type=client_credential"
+            f"&appid={WX_MP_APP_ID}"
+            f"&secret={WX_MP_APP_SECRET}"
+        )
+        token_data = await self._http_get(token_url)
+        if not token_data or "access_token" not in token_data:
+            logger.error(f"获取access_token失败: {token_data}")
+            return None
+
+        access_token = token_data["access_token"]
+
+        # 用 access_token 获取 jsapi_ticket
+        ticket_url = (
+            f"https://api.weixin.qq.com/cgi-bin/ticket/getticket"
+            f"?access_token={access_token}&type=jsapi"
+        )
+        ticket_data = await self._http_get(ticket_url)
+        if not ticket_data or ticket_data.get("errcode") != 0:
+            logger.error(f"获取jsapi_ticket失败: {ticket_data}")
+            return None
+
+        jsapi_ticket_cache["ticket"] = ticket_data["ticket"]
+        jsapi_ticket_cache["expires_at"] = now + 7000  # 提前200秒过期
+
+        return ticket_data["ticket"]
+
+    async def _http_get(self, url):
+        client = tornado.httpclient.AsyncHTTPClient()
+        try:
+            resp = await client.fetch(url, request_timeout=10)
+            return json.loads(resp.body.decode("utf-8"))
+        except Exception as e:
+            logger.error(f"HTTP请求失败: {e}")
+            return None
+
+
 # 定义处理器
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
@@ -46,8 +135,8 @@ WX_REFRESH_TOKEN_URL = "https://api.weixin.qq.com/sns/oauth2/refresh_token"
 WX_AUTH_CHECK_URL = "https://api.weixin.qq.com/sns/auth"
 
 # 在配置区增加服务号的密钥
-WX_MP_APP_ID = "wx_your_mp_appid"        # 服务号 appId
-WX_MP_APP_SECRET = "your_mp_secret"       # 服务号 appSecret
+WX_MP_APP_ID = "wx50afdd19b43f590e"        # 服务号 appId
+WX_MP_APP_SECRET = "b143a473bd9cc93478d33d471f7354f7"       # 服务号 appSecret
 
 WX_OPEN_APP_ID = "wxd642d4eeae08b232"    # 开放平台网站应用 appId（PC扫码用）
 WX_OPEN_APP_SECRET = "02a3d0bed716644e9d5253ac3ab175c8"   # 开放平台网站应用 appSecret
@@ -230,16 +319,50 @@ class WechatLoginHandler(MainHandler):
 class WithdrawHandler(MainHandler):
 
     async def post(self):
-        body = json.loads(self.request.body) 
-        login_type = body.get("login_type")
-        openid = body.get("openid")
-        amount = body.get("amount")
-        if login_type == "mobile":
-            client_id = "mobile_app"
-        else:
-            client_id = "web_app"
-        transfer_to_openid(openid=openid,amount=amount,client_id=client_id)
-    
+        try:
+            body = json.loads(self.request.body)
+            login_type = body.get("login_type")
+            openid = body.get("openid")
+            amount = body.get("amount")
+
+            if not openid or not amount:
+                self.write_json({"success": False, "msg": "缺少必要参数"})
+                return
+
+            if login_type == "mobile":
+                client_id = "mobile_app"
+                app_id = WX_MP_APP_ID
+            else:
+                client_id = "web_app"
+                app_id = WX_OPEN_APP_ID
+
+            # 调用转账
+            result = transfer_to_openid(openid=openid, amount=amount, client_id=client_id)
+            logger.info(f"转账结果: {result}")
+
+            # 判断转账结果，把 package_info 返回给前端
+            if result and result.get("state") == "WAIT_USER_CONFIRM":
+                self.write_json({
+                    "success": True,
+                    "msg": "转账已发起，请确认收款",
+                    "package_info": result["package_info"],
+                    "mch_id": result.get("mch_id", "你的商户号"),  # 需要返回商户号
+                    "app_id": app_id,
+                })
+            elif result and result.get("state") == "ACCEPTED":
+                # 免确认模式，直接成功
+                self.write_json({
+                    "success": True,
+                    "msg": "提现成功，已到账微信零钱",
+                    "direct": True
+                })
+            else:
+                error_msg = result.get("message", "转账失败") if result else "转账接口无响应"
+                self.write_json({"success": False, "msg": error_msg})
+
+        except Exception as e:
+            logger.error(f"提现接口异常: {e}")
+            self.write_json({"success": False, "msg": f"服务器异常: {str(e)}"})
 
     
 
@@ -251,6 +374,7 @@ def make_app():
         (r"/user/([0-9]+)", UserHandler),  # 动态路由
         (r"/wanxiang/api/wechat/login", WechatLoginHandler),
         (r"/wanxiang/api/withdraw", WithdrawHandler),
+        (r"/wanxiang/api/wechat/jsapi_signature", JsapiSignatureHandler),  # 新增
         (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": settings["static_path"]}),
     ], **settings)
 
