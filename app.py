@@ -526,7 +526,7 @@ class CreateOrderHandler(tornado.web.RequestHandler):
         try:
             data = json.loads(self.request.body)
             openid = data.get("openid")
-            order_name = data.get("order_name", {})
+            order_name = data.get("order_name", "2026年丙午年运势报告")
             ref_code = data.get("ref_code", "")
             login_type = data.get("mobile","")
             amount = data.get("amount",0)
