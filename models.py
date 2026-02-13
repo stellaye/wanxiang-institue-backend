@@ -92,9 +92,7 @@ class BaseModel(AioModel):
 
 
 
-from peewee import *
-from datetime import datetime
-import time
+
 
 # 假设你已经有了数据库连接
 db = SqliteDatabase('orders.db')  # 或其他数据库
