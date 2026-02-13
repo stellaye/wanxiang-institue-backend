@@ -131,7 +131,7 @@ class Order(BaseModel):
     )
     
     # 创建时间（时间戳）
-    create_time = IntegerField(null=False, default=int(time.time))
+    create_time = IntegerField(null=False, default=int(time.time()))
     
     # 添加一些额外的常用字段
     update_time = IntegerField(null=True)  # 更新时间
