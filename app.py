@@ -26,28 +26,59 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.x509 import load_pem_x509_certificate
 import os
 import base64
+import time
+import json
+import tornado.web
+from logger import logger
 
+
+class LoggedRequestHandler(tornado.web.RequestHandler):
+    """带请求/响应日志的基类，替换原有 MainHandler 作为所有 Handler 的父类"""
+
+    def prepare(self):
+        """请求进入时打印日志"""
+        self._start_time = time.time()
+        # 基本信息
+        logger.info(
+            f"[REQ] {self.request.method} {self.request.uri} "
+            f"| IP: {self.request.remote_ip} "
+            f"| Content-Length: {len(self.request.body) if self.request.body else 0}"
+        )
+        # 打印请求头（可选，按需开启）
+        # logger.debug(f"[REQ HEADERS] {dict(self.request.headers)}")
+
+        # 打印请求体（POST/PUT 等有 body 的请求）
+        if self.request.body:
+            body_str = self.request.body.decode("utf-8", errors="replace")
+            # 截断过长的 body，防止日志爆炸
+            if len(body_str) > 2000:
+                body_str = body_str[:2000] + "...(truncated)"
+            logger.info(f"[REQ BODY] {body_str}")
+
+    def on_finish(self):
+        """请求结束时打印响应日志"""
+        duration = (time.time() - self._start_time) * 1000  # 毫秒
+        logger.info(
+            f"[RES] {self.request.method} {self.request.uri} "
+            f"| Status: {self.get_status()} "
+            f"| Duration: {duration:.1f}ms"
+        )
+
+    def write_json(self, data):
+        self.set_header("Content-Type", "application/json")
+        self.write(json.dumps(data, ensure_ascii=False))
+
+    def write_error_json(self, msg, code=400):
+        self.set_status(code)
+        self.write_json({"success": False, "msg": msg})
 
 
 # 全局缓存 jsapi_ticket
 jsapi_ticket_cache = {"ticket": "", "expires_at": 0}
 
 
-# 定义处理器
-class MainHandler(tornado.web.RequestHandler):
-    def get(self):
-        self.write("Hello, Tornado!")
-    
-    def post(self):
-        data = self.get_argument("data", "No data provided")
-        self.write(f"Received: {data}")
-
-    def write_json(self, data):
-        self.set_header("Content-Type", "application/json")
-        self.write(json.dumps(data, ensure_ascii=False))
-
         
-class JsapiSignatureHandler(MainHandler):
+class JsapiSignatureHandler(LoggedRequestHandler):
     """微信JSSDK签名接口"""
 
     async def post(self):
@@ -131,7 +162,7 @@ class JsapiSignatureHandler(MainHandler):
 
 
 # JSON API 示例
-class APIHandler(tornado.web.RequestHandler):
+class APIHandler(LoggedRequestHandler):
     def get(self):
         self.write({
             "status": "success",
@@ -140,7 +171,7 @@ class APIHandler(tornado.web.RequestHandler):
         })
 
 # 动态路由示例
-class UserHandler(tornado.web.RequestHandler):
+class UserHandler(LoggedRequestHandler):
     def get(self, user_id):
         self.write(f"User ID: {user_id}")
 
@@ -169,7 +200,7 @@ WX_OPEN_APP_ID = "wxd642d4eeae08b232"    # 开放平台网站应用 appId（PC�
 WX_OPEN_APP_SECRET = "02a3d0bed716644e9d5253ac3ab175c8"   # 开放平台网站应用 appSecret
 
 
-class WechatLoginHandler(MainHandler):
+class WechatLoginHandler(LoggedRequestHandler):
     """
     微信登录接口
     POST /api/wechat/login
@@ -343,7 +374,7 @@ class WechatLoginHandler(MainHandler):
 
 
 
-class WithdrawHandler(MainHandler):
+class WithdrawHandler(LoggedRequestHandler):
 
     async def post(self):
         try:
@@ -510,7 +541,7 @@ def decrypt_aes_gcm(nonce: str, ciphertext: str, associated_data: str) -> str:
 # API Handlers
 # ============================================================
 
-class CreateOrderHandler(tornado.web.RequestHandler):
+class CreateOrderHandler(LoggedRequestHandler):
     """
     创建订单 + 调用微信JSAPI下单接口
     前端 POST /api/wechat/pay/create
@@ -531,10 +562,10 @@ class CreateOrderHandler(tornado.web.RequestHandler):
             login_type = data.get("mobile","")
             amount = data.get("amount",1)
             
-            # if not openid:
-            #     self.set_status(400)
-            #     self.write({"error": "缺少openid参数"})
-            #     return
+            if not openid:
+                self.set_status(400)
+                self.write({"error": "缺少openid参数"})
+                return
 
             out_trade_no = generate_out_trade_no()
 
@@ -638,7 +669,7 @@ class CreateOrderHandler(tornado.web.RequestHandler):
             return None
 
 
-class PayNotifyHandler(tornado.web.RequestHandler):
+class PayNotifyHandler(LoggedRequestHandler):
     """
     微信支付结果回调通知
     POST /api/wechat/pay/notify
@@ -684,7 +715,7 @@ class PayNotifyHandler(tornado.web.RequestHandler):
             self.write({"code": "FAIL", "message": str(e)})
 
 
-class QueryOrderHandler(tornado.web.RequestHandler):
+class QueryOrderHandler(LoggedRequestHandler):
     """
     查询订单支付状态
     GET /api/wechat/pay/query?order_no=xxx
@@ -745,7 +776,6 @@ class QueryOrderHandler(tornado.web.RequestHandler):
 # 应用路由
 def make_app():
     return tornado.web.Application([
-        (r"/", MainHandler),
         (r"/api", APIHandler),
         (r"/user/([0-9]+)", UserHandler),  # 动态路由
         (r"/wanxiang/api/wechat/login", WechatLoginHandler),
