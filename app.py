@@ -531,8 +531,6 @@ class CreateOrderHandler(tornado.web.RequestHandler):
             login_type = data.get("mobile","")
             amount = data.get("amount",0)
             
-            
-
             if not openid:
                 self.set_status(400)
                 self.write({"error": "缺少openid参数"})
@@ -543,23 +541,23 @@ class CreateOrderHandler(tornado.web.RequestHandler):
             # 1. 调用微信 JSAPI下单接口
             prepay_id = await self._create_prepay_order(out_trade_no, openid,order_name,amount)
 
-            if not prepay_id:
-                self.set_status(500)
-                self.write({"error": "微信下单失败"})
-                return
+            # if not prepay_id:
+            #     self.set_status(500)
+            #     self.write({"error": "微信下单失败"})
+            #     return
 
-            if login_type == "mobile":
-                target_user = await User.aio_get(User.mobile_openid == openid)
-                user_id = target_user.id
-            else:
-                target_user = await User.aio_get(User.web_openid == openid)
-                user_id = target_user.id
+            # if login_type == "mobile":
+            #     target_user = await User.aio_get(User.mobile_openid == openid)
+            #     user_id = target_user.id
+            # else:
+            #     target_user = await User.aio_get(User.web_openid == openid)
+            #     user_id = target_user.id
 
             # 2. 存储订单
             newOrder = Order(
                 out_trade_no = out_trade_no,
                 order_name = order_name,
-                user_id = user_id,
+                user_id = 0,
                 ref_code = ref_code,
                 amount = amount,
                 prepay_id = prepay_id,
