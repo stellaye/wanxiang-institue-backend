@@ -91,6 +91,92 @@ class BaseModel(AioModel):
         return super().save(*args, **kwargs)
 
 
+
+from peewee import *
+from datetime import datetime
+import time
+
+# 假设你已经有了数据库连接
+db = SqliteDatabase('orders.db')  # 或其他数据库
+
+class Order(BaseModel):
+    # 订单号 - 主键
+    out_trade_no = CharField(max_length=64, primary_key=True, index=True)
+    
+    # 订单名
+    order_name = CharField(max_length=64, primary_key=True, index=True)
+
+    # 用户信息
+    user_id = IntegerField(null=False)
+    
+    # 推荐码
+    ref_code = CharField(max_length=64, null=True, index=True)
+    
+    # 金额（分）
+    amount = IntegerField(null=False, help_text="金额，单位：分")
+    
+    # 预支付ID
+    prepay_id = CharField(max_length=128, null=True)
+    
+    # 订单状态
+    status = CharField(
+        max_length=20, 
+        choices=[
+            ('NOTPAY', '未支付'),
+            ('SUCCESS', '支付成功'),
+            ('CLOSED', '已关闭')
+        ],
+        default='NOTPAY',
+        index=True
+    )
+    
+    # 创建时间（时间戳）
+    create_time = IntegerField(null=False, default=int(time.time))
+    
+    # 添加一些额外的常用字段
+    update_time = IntegerField(null=True)  # 更新时间
+    pay_time = IntegerField(null=True)  # 支付时间
+    transaction_id = CharField(max_length=64, null=True)  # 微信支付交易号
+    
+    class Meta:
+        database = db
+        table_name = 'orders'
+        indexes = (
+            # 复合索引
+            (('status', 'create_time'), False),
+        )
+    
+    @classmethod
+    def create_order(cls, out_trade_no, openid, birth_info, ref_code, amount, prepay_id=None):
+        """创建订单的辅助方法"""
+        return cls.create(
+            out_trade_no=out_trade_no,
+            openid=openid,
+            birth_info=birth_info,  # 如果birth_info是dict，需要用json.dumps
+            ref_code=ref_code,
+            amount=amount,
+            prepay_id=prepay_id,
+            status='NOTPAY',
+            create_time=int(time.time())
+        )
+    
+    def to_dict(self):
+        """转换为字典"""
+        import json
+        return {
+            'out_trade_no': self.out_trade_no,
+            'openid': self.openid,
+            'birth_info': json.loads(self.birth_info) if self.birth_info else None,
+            'ref_code': self.ref_code,
+            'amount': self.amount,
+            'prepay_id': self.prepay_id,
+            'status': self.status,
+            'create_time': self.create_time,
+            'pay_time': self.pay_time,
+            'transaction_id': self.transaction_id
+        }
+
+
 class User(BaseModel):
     """
     用户表模型

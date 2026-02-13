@@ -390,7 +390,8 @@ def execute_single_transfer(client_id, openid, amount, out_bill_no=None,
                 "out_bill_no": response.get("out_bill_no"),
                 "create_time": response.get("create_time"),
                 "amount": amount,
-                "status": response.get("status")
+                "state": response.get("state"),
+                "package_info": response.get('package_info', '')  
             }
         else:
             print(f"客户端 '{client_id}' 单笔转账失败: {message}")
