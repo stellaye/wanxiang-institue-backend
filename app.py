@@ -594,7 +594,7 @@ class CreateOrderHandler(LoggedRequestHandler):
                 prepay_id = prepay_id,
                 status = "NOTPAY"
             )
-            await newOrder.aio_save()
+            await newOrder.aio_save(force_insert=True)
 
             # 3. 构建前端调起支付所需的参数
             appid = WECHAT_PAY_CONFIG["appid"]
