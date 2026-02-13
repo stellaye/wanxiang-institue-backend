@@ -94,28 +94,19 @@ class BaseModel(AioModel):
 
 
 
-# 假设你已经有了数据库连接
-db = SqliteDatabase('orders.db')  # 或其他数据库
-
 class Order(BaseModel):
     # 订单号 - 主键
     out_trade_no = CharField(max_length=64, primary_key=True, index=True)
-    
     # 订单名
     order_name = CharField(max_length=64)
-
     # 用户信息
     user_id = IntegerField(null=False)
-    
     # 推荐码
     ref_code = CharField(max_length=64, null=True, index=True)
-    
     # 金额（分）
     amount = IntegerField(null=False, help_text="金额，单位：分")
-    
     # 预支付ID
-    prepay_id = CharField(max_length=128, null=True)
-    
+    prepay_id = CharField(max_length=128, null=True) 
     # 订单状态
     status = CharField(
         max_length=20, 
@@ -137,7 +128,6 @@ class Order(BaseModel):
     transaction_id = CharField(max_length=64, null=True)  # 微信支付交易号
     
     class Meta:
-        database = db
         table_name = 'orders'
         indexes = (
             # 复合索引
