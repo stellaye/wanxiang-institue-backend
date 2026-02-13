@@ -743,18 +743,6 @@ class QueryOrderHandler(tornado.web.RequestHandler):
 
 
 
-def make_app():
-    return tornado.web.Application([
-
-        # ... 其他路由
-    ])
-
-
-if __name__ == "__main__":
-    app = make_app()
-    app.listen(8888)
-    logger.info("Server started on port 8888")
-    tornado.ioloop.IOLoop.current().start()
 
 # 应用路由
 def make_app():
