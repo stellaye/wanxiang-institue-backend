@@ -701,9 +701,10 @@ class PayNotifyHandler(LoggedRequestHandler):
                 if trade_state == "SUCCESS":
                     target_order.transaction_id = payment_info.get("transaction_id", "")
                     target_order.pay_time = payment_info.get("success_time", "")
-                    
                     # TODO: 这里可以触发生成报告、发送通知等业务逻辑
                     logger.info(f"订单支付成功: {out_trade_no}")
+                
+                await target_order.aio_save(force_insert=True)
 
             # 返回成功应答（必须返回，否则微信会重复通知）
             self.set_status(200)
