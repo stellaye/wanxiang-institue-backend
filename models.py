@@ -186,6 +186,7 @@ class User(BaseModel):
     # 时间字段
     created_time = DateTimeField(default=datetime.datetime.now, verbose_name='创建时间')
     updated_time = DateTimeField(default=datetime.datetime.now, verbose_name='更新时间')
+    ref_code = CharField(max_length=100, null=True, verbose_name='邀请码')
     
     class Meta:
         table_name = 'user'

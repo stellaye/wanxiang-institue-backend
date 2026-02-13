@@ -30,6 +30,8 @@ import time
 import json
 import tornado.web
 from logger import logger
+from common import generate_unique_invite_code
+
 
 
 class LoggedRequestHandler(tornado.web.RequestHandler):
@@ -77,7 +79,118 @@ class LoggedRequestHandler(tornado.web.RequestHandler):
 jsapi_ticket_cache = {"ticket": "", "expires_at": 0}
 
 
-        
+
+# ============================================================
+# 新增: Native 支付（PC扫码支付）Handler
+# 添加到你的 main.py 中
+# ============================================================
+
+class CreateNativeOrderHandler(LoggedRequestHandler):
+    """
+    PC端扫码支付 - Native下单
+    POST /wanxiang/api/wechat/pay/create_native
+    Body: {
+        "order_name": "2026年丙午年运势报告",
+        "amount": 990,
+        "ref_code": "分销码(可选)",
+        "birth_info": { ... }
+    }
+    返回: { "code_url": "weixin://wxpay/...", "order_no": "..." }
+    """
+
+    async def post(self):
+        try:
+            data = json.loads(self.request.body)
+            order_name = data.get("order_name", "2026年丙午年运势报告")
+            ref_code = data.get("ref_code", "")
+            amount = data.get("amount", 990)
+            openid = data.get("openid")
+            login_type = data.get("mobile","")
+            out_trade_no = generate_out_trade_no()
+            # 1. 调用微信 Native 下单接口
+            code_url = await self._create_native_order(out_trade_no, order_name, amount)
+
+            if login_type == "mobile":
+                target_user = await User.aio_get(User.mobile_openid == openid)
+                user_id = target_user.id
+            else:
+                target_user = await User.aio_get(User.web_openid == openid)
+                user_id = target_user.id
+
+            if not code_url:
+                self.set_status(500)
+                self.write({"error": "微信下单失败"})
+                return
+
+            # 2. 存储订单
+            new_order = Order(
+                out_trade_no=out_trade_no,
+                order_name=order_name,
+                user_id=user_id,
+                ref_code=ref_code,
+                amount=amount,
+                prepay_id="",       # Native 支付没有 prepay_id
+                status="NOTPAY"
+            )
+            await new_order.aio_save(force_insert=True)
+
+            # 3. 返回二维码链接
+            self.write({
+                "code_url": code_url,
+                "order_no": out_trade_no,
+            })
+
+        except Exception as e:
+            logger.exception("创建Native订单失败")
+            self.set_status(500)
+            self.write({"error": str(e)})
+
+    async def _create_native_order(self, out_trade_no: str, order_name: str, amount: int) -> str:
+        """调用微信 Native 下单接口，返回 code_url"""
+        url = "https://api.mch.weixin.qq.com/v3/pay/transactions/native"
+        url_path = "/v3/pay/transactions/native"
+
+        body = {
+            "appid": WECHAT_PAY_CONFIG["appid"],
+            "mchid": WECHAT_PAY_CONFIG["mchid"],
+            "description": order_name,
+            "out_trade_no": out_trade_no,
+            "notify_url": WECHAT_PAY_CONFIG["notify_url"],
+            "amount": {
+                "total": amount,
+                "currency": "CNY"
+            }
+            # Native 支付不需要 payer.openid
+        }
+
+        body_str = json.dumps(body, ensure_ascii=False)
+        auth_header = build_authorization_header("POST", url_path, body_str)
+
+        http_client = tornado.httpclient.AsyncHTTPClient()
+        request = tornado.httpclient.HTTPRequest(
+            url=url,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": auth_header,
+            },
+            body=body_str,
+        )
+
+        response = await http_client.fetch(request, raise_error=False)
+
+        if response.code == 200:
+            result = json.loads(response.body)
+            code_url = result.get("code_url")
+            logger.info(f"Native下单成功: out_trade_no={out_trade_no}, code_url={code_url}")
+            return code_url
+        else:
+            logger.error(f"微信Native下单失败: code={response.code}, body={response.body}")
+            return None
+
+
+
 class JsapiSignatureHandler(LoggedRequestHandler):
     """微信JSSDK签名接口"""
 
@@ -251,14 +364,14 @@ class WechatLoginHandler(LoggedRequestHandler):
             if target_user:
                 pass
             else:
-                new_user = User(wechat_unionid = unionid,mobile_openid = openid)
+                new_user = User(wechat_unionid = unionid,mobile_openid = openid,ref_code = generate_unique_invite_code())
                 await new_user.aio_save()
         else:
             target_user = await User.aio_get_or_none(User.web_openid == openid)
             if target_user:
                 pass
             else:
-                new_user = User(wechat_unionid = unionid,web_openid = openid)
+                new_user = User(wechat_unionid = unionid,web_openid = openid,ref_code = generate_unique_invite_code())
                 await new_user.aio_save()     
 
         # 第二步：用 access_token 获取用户信息
@@ -572,23 +685,23 @@ class CreateOrderHandler(LoggedRequestHandler):
             # 1. 调用微信 JSAPI下单接口
             prepay_id = await self._create_prepay_order(out_trade_no, openid,order_name,amount)
 
-            # if not prepay_id:
-            #     self.set_status(500)
-            #     self.write({"error": "微信下单失败"})
-            #     return
+            if not prepay_id:
+                self.set_status(500)
+                self.write({"error": "微信下单失败"})
+                return
 
-            # if login_type == "mobile":
-            #     target_user = await User.aio_get(User.mobile_openid == openid)
-            #     user_id = target_user.id
-            # else:
-            #     target_user = await User.aio_get(User.web_openid == openid)
-            #     user_id = target_user.id
+            if login_type == "mobile":
+                target_user = await User.aio_get(User.mobile_openid == openid)
+                user_id = target_user.id
+            else:
+                target_user = await User.aio_get(User.web_openid == openid)
+                user_id = target_user.id
 
             # 2. 存储订单
             newOrder = Order(
                 out_trade_no = out_trade_no,
                 order_name = order_name,
-                user_id = 0,
+                user_id = user_id,
                 ref_code = ref_code,
                 amount = amount,
                 prepay_id = prepay_id,
@@ -786,6 +899,7 @@ def make_app():
         (r"/wanxiang/api/wechat/pay/query", QueryOrderHandler),
         (r"/wanxiang/api/wechat/jsapi_signature", JsapiSignatureHandler),  # 新增
         (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": settings["static_path"]}),
+        (r"/wanxiang/api/wechat/pay/create_native", CreateNativeOrderHandler)
     ], **settings)
 
 # 启动应用
