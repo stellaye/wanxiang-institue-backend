@@ -529,7 +529,7 @@ class CreateOrderHandler(tornado.web.RequestHandler):
             order_name = data.get("order_name", "2026年丙午年运势报告")
             ref_code = data.get("ref_code", "")
             login_type = data.get("mobile","")
-            amount = data.get("amount",0)
+            amount = data.get("amount",1)
             
             # if not openid:
             #     self.set_status(400)
