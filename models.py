@@ -104,7 +104,7 @@ class Order(BaseModel):
     out_trade_no = CharField(max_length=64, primary_key=True, index=True)
     
     # 订单名
-    order_name = CharField(max_length=64, primary_key=True, index=True)
+    order_name = CharField(max_length=64)
 
     # 用户信息
     user_id = IntegerField(null=False)
