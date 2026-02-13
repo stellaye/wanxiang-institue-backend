@@ -531,10 +531,10 @@ class CreateOrderHandler(tornado.web.RequestHandler):
             login_type = data.get("mobile","")
             amount = data.get("amount",0)
             
-            if not openid:
-                self.set_status(400)
-                self.write({"error": "缺少openid参数"})
-                return
+            # if not openid:
+            #     self.set_status(400)
+            #     self.write({"error": "缺少openid参数"})
+            #     return
 
             out_trade_no = generate_out_trade_no()
 
