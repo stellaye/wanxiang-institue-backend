@@ -187,7 +187,8 @@ class User(BaseModel):
     created_time = DateTimeField(default=datetime.datetime.now, verbose_name='创建时间')
     updated_time = DateTimeField(default=datetime.datetime.now, verbose_name='更新时间')
     ref_code = CharField(max_length=100, null=True, verbose_name='邀请码')
-    
+    total_earned = DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name='累计收益(分)')
+
     class Meta:
         table_name = 'user'
         indexes = (
@@ -199,3 +200,38 @@ class User(BaseModel):
         # 自动更新updated_time
         self.updated_time = datetime.datetime.now()
         return super(User, self).save(*args, **kwargs)
+
+
+
+
+class Product(BaseModel):
+    """产品表"""
+    id = AutoField(primary_key=True)
+    name = CharField(max_length=100, verbose_name='产品名称')
+    desc = CharField(max_length=200, null=True, verbose_name='产品描述')
+    icon = CharField(max_length=20, default='🔒', verbose_name='图标emoji')
+    url_path = CharField(max_length=200, verbose_name='产品URL路径')
+    base_price = IntegerField(verbose_name='保底价(分)')       # 用户定价不能低于此
+    recommended_price = IntegerField(verbose_name='推荐价(分)')  # 默认推荐价
+    max_price = IntegerField(verbose_name='最高价(分)')         # 用户定价不能高于此
+    commission_rate = IntegerField(default=45, verbose_name='佣金比例%')
+    is_active = BooleanField(default=True, verbose_name='是否上架')
+    created_time = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        table_name = 'product'
+
+
+class UserProductPrice(BaseModel):
+    """用户自定义产品价格表"""
+    id = AutoField(primary_key=True)
+    user_id = IntegerField(verbose_name='用户ID')
+    product_id = IntegerField(verbose_name='产品ID')
+    custom_price = IntegerField(verbose_name='自定义价格(分)')
+    updated_time = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        table_name = 'user_product_price'
+        indexes = (
+            (('user_id', 'product_id'), True),  # 联合唯一索引
+        )

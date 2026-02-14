@@ -3,7 +3,7 @@ import tornado.web
 import json
 from logger import logger
 import tornado.httpclient  # 这是解决错误的关键
-from models import User,Order
+from models import User,Order,Product,UserProductPrice
 from wxpay.wxpay import transfer_to_openid
 import hashlib
 import time
@@ -31,6 +31,7 @@ import json
 import tornado.web
 from logger import logger
 from common import generate_unique_invite_code
+import datetime
 
 
 
@@ -105,7 +106,7 @@ class CreateNativeOrderHandler(LoggedRequestHandler):
             ref_code = data.get("ref_code", "")
             amount = data.get("amount", 990)
             openid = data.get("openid")
-            login_type = data.get("mobile","")
+            login_type = data.get("login_type","")
             out_trade_no = generate_out_trade_no()
             # 1. 调用微信 Native 下单接口
             code_url = await self._create_native_order(out_trade_no, order_name, amount)
@@ -360,19 +361,19 @@ class WechatLoginHandler(LoggedRequestHandler):
         unionid = token_data.get("unionid", "")
         logger.info(f"Get Token info:{token_data}")
         if login_type == "mobile":
-            target_user = await User.aio_get_or_none(User.mobile_openid == openid)
+            target_user = await User.aio_get_or_none(((User.mobile_openid == openid) | (User.wechat_unionid == unionid) ))
             if target_user:
                 pass
             else:
-                new_user = User(wechat_unionid = unionid,mobile_openid = openid,ref_code = generate_unique_invite_code())
-                await new_user.aio_save()
+                target_user = User(wechat_unionid = unionid,mobile_openid = openid,ref_code = generate_unique_invite_code())
+                await target_user.aio_save()
         else:
-            target_user = await User.aio_get_or_none(User.web_openid == openid)
+            target_user = await User.aio_get_or_none(((User.web_openid == openid) | (User.wechat_unionid == unionid) ))
             if target_user:
                 pass
             else:
-                new_user = User(wechat_unionid = unionid,web_openid = openid,ref_code = generate_unique_invite_code())
-                await new_user.aio_save()     
+                target_user = User(wechat_unionid = unionid,web_openid = openid,ref_code = generate_unique_invite_code())
+                await target_user.aio_save()     
 
         # 第二步：用 access_token 获取用户信息
         user_info = await self._get_user_info(access_token, openid)
@@ -383,7 +384,7 @@ class WechatLoginHandler(LoggedRequestHandler):
             return
 
         # 第三步：处理用户数据（存库 / 更新 / 生成业务token等）
-        user = await self._save_or_update_user(user_info, refresh_token)
+        user = await self._save_or_update_user(user_info, target_user)
 
         # 第四步：返回给前端
         self.write_json({
@@ -434,7 +435,7 @@ class WechatLoginHandler(LoggedRequestHandler):
             logger.error(f"JSON解析失败: {e}")
             return None
 
-    async def _save_or_update_user(self, user_info, refresh_token):
+    async def _save_or_update_user(self, user_info, target_user):
         """
         保存或更新用户信息到数据库
         这里给出示例结构，请根据实际数据库替换
@@ -447,34 +448,9 @@ class WechatLoginHandler(LoggedRequestHandler):
         country = user_info.get("country", "")
         province = user_info.get("province", "")
         city = user_info.get("city", "")
-
-        # TODO: 替换为真实的数据库操作
-        # 例如使用 MySQL / PostgreSQL / MongoDB:
-        #
-        # existing_user = await db.users.find_one({"openid": openid})
-        # if existing_user:
-        #     await db.users.update_one(
-        #         {"openid": openid},
-        #         {"$set": {
-        #             "nickname": nickname,
-        #             "headimgurl": headimgurl,
-        #             "refresh_token": refresh_token,
-        #             "updated_at": datetime.now()
-        #         }}
-        #     )
-        # else:
-        #     await db.users.insert_one({
-        #         "openid": openid,
-        #         "unionid": unionid,
-        #         "nickname": nickname,
-        #         "headimgurl": headimgurl,
-        #         "refresh_token": refresh_token,
-        #         "balance": 0,
-        #         "created_at": datetime.now()
-        #     })
-
-        # logger.info(f"用户登录成功: {nickname} ({openid})")
-
+        target_user.unionid = unionid
+        target_user.nickname = nickname
+        await target_user.aio_save()
         return {
             "openid": openid,
             "unionid": unionid,
@@ -483,8 +459,8 @@ class WechatLoginHandler(LoggedRequestHandler):
             "sex": sex,
             "province": province,
             "city": city,
+            "ref_code":target_user.ref_code
         }
-
 
 
 class WithdrawHandler(LoggedRequestHandler):
@@ -672,7 +648,7 @@ class CreateOrderHandler(LoggedRequestHandler):
             openid = data.get("openid")
             order_name = data.get("order_name", "2026年丙午年运势报告")
             ref_code = data.get("ref_code", "")
-            login_type = data.get("mobile","")
+            login_type = data.get("login_type","")
             amount = data.get("amount",1)
             
             if not openid:
@@ -818,6 +794,22 @@ class PayNotifyHandler(LoggedRequestHandler):
                     logger.info(f"订单支付成功: {out_trade_no}")
                 
                 await target_order.aio_save()
+                if target_order.ref_code:
+                      ref_user = await User.aio_get_or_none(User.ref_code == target_order.ref_code)
+                      if ref_user:
+                          # 查询产品的佣金比例（如果有的话）
+                          # 这里简化用45%，你也可以从Product表查
+                          commission_rate = 45
+                          price = target_order.amount
+                          commission_fen = price * commission_rate / 100
+                          commission_yuan = round(commission_fen / 100)
+                          commission_final = commission_yuan * 100  # 分
+                
+                          ref_user.balance = (ref_user.balance or 0) + commission_final
+                          ref_user.total_earned = (ref_user.total_earned or 0) + commission_final  # ← 新增
+                          await ref_user.aio_save()
+
+                                                
 
             # 返回成功应答（必须返回，否则微信会重复通知）
             self.set_status(200)
@@ -886,6 +878,273 @@ class QueryOrderHandler(LoggedRequestHandler):
 
 
 
+import json
+from peewee import fn
+
+# ---- 1. 仪表盘接口 ----
+class DashboardHandler(LoggedRequestHandler):
+    """
+    GET /wanxiang/api/dashboard?openid=xxx&login_type=mobile
+    返回用户的余额、累计收益、订单数、推广人数
+    """
+    async def get(self):
+        openid = self.get_argument("openid", "")
+        login_type = self.get_argument("login_type", "mobile")
+
+        if not openid:
+            self.write_json({"success": False, "msg": "缺少openid"})
+            return
+
+        # 查找用户
+        if login_type == "mobile":
+            user = await User.aio_get_or_none(User.mobile_openid == openid)
+        else:
+            user = await User.aio_get_or_none(User.web_openid == openid)
+
+        if not user:
+            self.write_json({"success": False, "msg": "用户不存在"})
+            return
+
+        ref_code = user.ref_code
+
+        # 统计数据（通过我的推荐码成交的订单）
+        order_count = 0
+        referral_count = 0
+        total_earnings_fen = 0
+
+        try:
+            # 成交订单数
+            count_query = (Order
+                .select(fn.COUNT(Order.out_trade_no))
+                .where(Order.ref_code == ref_code, Order.status == 'SUCCESS'))
+            order_count = await count_query.aio_scalar() or 0
+
+            # 推广人数（不同的 user_id 去重）
+            ref_query = (Order
+                .select(fn.COUNT(fn.DISTINCT(Order.user_id)))
+                .where(Order.ref_code == ref_code, Order.status == 'SUCCESS'))
+            referral_count = await ref_query.aio_scalar() or 0
+
+            # 累计收益 - 优先用 user.total_earned，备选从订单算
+            total_earnings_fen = int(user.total_earned or 0)
+            
+            # 如果 total_earned 为0但有订单，从订单重新计算
+            if total_earnings_fen == 0 and order_count > 0:
+                sum_query = (Order
+                    .select(fn.SUM(Order.amount))
+                    .where(Order.ref_code == ref_code, Order.status == 'SUCCESS'))
+                total_amount = await sum_query.aio_scalar() or 0
+                # 按45%佣金计算，四舍五入到元
+                total_earnings_fen = round(total_amount * 45 / 100 / 100) * 100
+
+        except Exception as e:
+            logger.error(f"统计数据查询失败: {e}")
+
+        self.write_json({
+            "success": True,
+            "data": {
+                "balance": int(user.balance or 0),          # 可提现余额(分)
+                "total_earnings": total_earnings_fen,         # 累计收益(分)
+                "order_count": order_count,                   # 成交订单数
+                "referral_count": referral_count,             # 推广人数
+            }
+        })
+
+
+# ---- 2. 产品列表接口 ----
+class ProductListHandler(LoggedRequestHandler):
+    """
+    GET /wanxiang/api/products?openid=xxx&login_type=mobile
+    返回产品列表 + 用户对每个产品的自定义价格
+    """
+    async def get(self):
+        openid = self.get_argument("openid", "")
+        login_type = self.get_argument("login_type", "mobile")
+
+        # 获取所有上架产品
+        products = await Product.select().where(Product.is_active == True).aio_execute()
+        product_list = []
+
+        # 查找用户（获取自定义价格）
+        user = None
+        user_prices = {}
+        if openid:
+            if login_type == "mobile":
+                user = await User.aio_get_or_none(User.mobile_openid == openid)
+            else:
+                user = await User.aio_get_or_none(User.web_openid == openid)
+
+            if user:
+                # 查询该用户的所有自定义价格
+                price_records = await (UserProductPrice
+                    .select()
+                    .where(UserProductPrice.user_id == user.id)
+                    .aio_execute())
+                for p in price_records:
+                    user_prices[p.product_id] = p.custom_price
+
+        for prod in products:
+            custom = user_prices.get(prod.id, None)
+            # 计算佣金（基于自定义价格或推荐价）
+            active_price = custom if custom else prod.recommended_price
+            commission = round(active_price * prod.commission_rate / 100 / 100) * 100  # 四舍五入到元(分)
+
+            product_list.append({
+                "id": prod.id,
+                "name": prod.name,
+                "desc": prod.desc,
+                "icon": prod.icon,
+                "url_path": prod.url_path,
+                "base_price": prod.base_price,
+                "recommended_price": prod.recommended_price,
+                "max_price": prod.max_price,
+                "commission_rate": prod.commission_rate,
+                "custom_price": custom,             # 用户自定义价格，null表示未设置
+                "active_price": active_price,       # 当前生效价格
+                "commission": commission,            # 当前佣金(分)
+            })
+
+        self.write_json({
+            "success": True,
+            "products": product_list
+        })
+
+
+# ---- 3. 设置自定义价格接口 ----
+class SetUserPriceHandler(LoggedRequestHandler):
+    """
+    POST /wanxiang/api/user/set_price
+    Body: { "openid": "xxx", "login_type": "mobile", "product_id": 1, "price": 12800 }
+    price 单位为分
+    """
+    async def post(self):
+        try:
+            body = json.loads(self.request.body)
+            openid = body.get("openid")
+            login_type = body.get("login_type", "mobile")
+            product_id = body.get("product_id")
+            price = body.get("price")  # 分
+
+            if not all([openid, product_id, price]):
+                self.write_json({"success": False, "msg": "参数不完整"})
+                return
+
+            price = int(price)
+
+            # 查找用户
+            if login_type == "mobile":
+                user = await User.aio_get_or_none(User.mobile_openid == openid)
+            else:
+                user = await User.aio_get_or_none(User.web_openid == openid)
+
+            if not user:
+                self.write_json({"success": False, "msg": "用户不存在"})
+                return
+
+            # 查找产品
+            product = await Product.aio_get_or_none(Product.id == product_id)
+            if not product:
+                self.write_json({"success": False, "msg": "产品不存在"})
+                return
+
+            # 校验价格范围
+            if price < product.base_price:
+                self.write_json({
+                    "success": False,
+                    "msg": f"价格不能低于保底价 ¥{product.base_price / 100:.2f}"
+                })
+                return
+
+            if price > product.max_price:
+                self.write_json({
+                    "success": False,
+                    "msg": f"价格不能高于最高价 ¥{product.max_price / 100:.2f}"
+                })
+                return
+
+            # 更新或插入自定义价格
+            existing = await UserProductPrice.aio_get_or_none(
+                UserProductPrice.user_id == user.id,
+                UserProductPrice.product_id == product_id
+            )
+
+            if existing:
+                existing.custom_price = price
+                existing.updated_time = datetime.datetime.now()
+                await existing.aio_save()
+            else:
+                new_price = UserProductPrice(
+                    user_id=user.id,
+                    product_id=product_id,
+                    custom_price=price
+                )
+                await new_price.aio_save(force_insert=True)
+
+            # 返回新的佣金
+            commission = round(price * product.commission_rate / 100 / 100) * 100
+
+            self.write_json({
+                "success": True,
+                "msg": "价格设置成功",
+                "active_price": price,
+                "commission": commission
+            })
+
+        except Exception as e:
+            logger.error(f"设置价格失败: {e}")
+            self.write_json({"success": False, "msg": str(e)})
+
+
+# ---- 4. 查询推荐人定价接口（给产品购买页调用）----
+class GetRefPriceHandler(LoggedRequestHandler):
+    """
+    GET /wanxiang/api/product/ref_price?ref=XXXX&product_id=1
+    或 GET /wanxiang/api/product/ref_price?ref=XXXX&url_path=2026-yearly-report
+    购买页面调用，获取推荐人对该产品的定价
+    如果推荐人没设置自定义价格，返回推荐价
+    """
+    async def get(self):
+        ref_code = self.get_argument("ref", "")
+        product_id = self.get_argument("product_id", "")
+        url_path = self.get_argument("url_path", "")
+
+        # 支持 product_id 或 url_path 两种查找方式
+        product = None
+        if product_id:
+            product = await Product.aio_get_or_none(Product.id == int(product_id))
+        elif url_path:
+            product = await Product.aio_get_or_none(Product.url_path == url_path)
+        else:
+            self.write_json({"success": False, "msg": "缺少product_id或url_path"})
+            return
+
+        if not product:
+            self.write_json({"success": False, "msg": "产品不存在"})
+            return
+
+        active_price = product.recommended_price  # 默认推荐价
+
+        if ref_code:
+            ref_user = await User.aio_get_or_none(User.ref_code == ref_code)
+            if ref_user:
+                user_price = await UserProductPrice.aio_get_or_none(
+                    UserProductPrice.user_id == ref_user.id,
+                    UserProductPrice.product_id == product.id
+                )
+                if user_price:
+                    active_price = user_price.custom_price
+
+        self.write_json({
+            "success": True,
+            "product_id": product.id,
+            "name": product.name,
+            "price": active_price,              # 当前生效价格(分)
+            "original_price": product.max_price, # 划线原价(分)，用最高价作为"原价"
+            "max_price": product.max_price,
+            "base_price": product.base_price,
+            "ref_code": ref_code
+        })
+
 
 # 应用路由
 def make_app():
@@ -899,7 +1158,12 @@ def make_app():
         (r"/wanxiang/api/wechat/pay/query", QueryOrderHandler),
         (r"/wanxiang/api/wechat/jsapi_signature", JsapiSignatureHandler),  # 新增
         (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": settings["static_path"]}),
-        (r"/wanxiang/api/wechat/pay/create_native", CreateNativeOrderHandler)
+        (r"/wanxiang/api/wechat/pay/create_native", CreateNativeOrderHandler),
+        (r"/wanxiang/api/dashboard", DashboardHandler),
+        (r"/wanxiang/api/products", ProductListHandler),
+          (r"/wanxiang/api/user/set_price", SetUserPriceHandler),
+          (r"/wanxiang/api/product/ref_price", GetRefPriceHandler),
+        
     ], **settings)
 
 # 启动应用
