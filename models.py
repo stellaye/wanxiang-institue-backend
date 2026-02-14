@@ -95,6 +95,8 @@ class BaseModel(AioModel):
 
 
 class Order(BaseModel):
+
+    id = IntegerField(null=False)
     # 订单号 - 主键
     out_trade_no = CharField(max_length=64, primary_key=True, index=True)
     # 订单名
@@ -120,11 +122,11 @@ class Order(BaseModel):
     )
     
     # 创建时间（时间戳）
-    create_time = IntegerField(null=False, default=int(time.time()))
+    create_time =  DateTimeField(default=datetime.datetime.now, verbose_name='创建时间')
     
     # 添加一些额外的常用字段
-    update_time = IntegerField(null=True)  # 更新时间
-    pay_time = IntegerField(null=True)  # 支付时间
+    update_time =  DateTimeField(default=datetime.datetime.now, verbose_name='更新时间')
+    pay_time =  DateTimeField(default=datetime.datetime.now, verbose_name='付款时间')
     transaction_id = CharField(max_length=64, null=True)  # 微信支付交易号
     
     class Meta:
@@ -235,3 +237,28 @@ class UserProductPrice(BaseModel):
         indexes = (
             (('user_id', 'product_id'), True),  # 联合唯一索引
         )
+
+
+class Report(BaseModel):
+    """年运报告存储表"""
+    id = AutoField()
+    order_no = CharField(max_length=64, unique=True, index=True)  # 关联订单号
+    user_id = IntegerField(index=True)                            # 用户ID
+    
+    # 八字信息
+    bazi_str = CharField(max_length=64, default="")               # "癸酉 己未 辛丑 戊子"
+    birth_info_json = TextField(default="{}")                      # 原始出生信息JSON
+    
+    # 报告内容
+    report_json = TextField(default="")                            # 完整报告JSON（可能很大）
+    
+    # 状态
+    status = CharField(max_length=20, default="pending")           # pending/generating/completed/failed
+    error_msg = TextField(default="")                              # 失败原因
+    
+    # 时间
+    created_at = DateTimeField(default=datetime.datetime.now)
+    completed_at = DateTimeField(null=True)
+
+    class Meta:
+        table_name = 'reports'
