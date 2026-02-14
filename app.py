@@ -32,6 +32,31 @@ import tornado.web
 from logger import logger
 from common import generate_unique_invite_code
 import datetime
+import traceback
+
+
+logger = logging.getLogger(__name__)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+key_path = os.path.join(os.path.join(current_dir,"wxpay"),"apiclient_key.pem")
+
+
+
+
+# 商品价格（单位：分）
+PRODUCT_PRICE_FEN = 990  # ¥9.9 = 990分
+
+# ============================================================
+# 配置 - 请替换为你的真实配置
+# ============================================================
+WECHAT_PAY_CONFIG = {
+    "appid": "wx50afdd19b43f590e",           # 公众号 AppID
+    "mchid": "1648741001",                # 商户号
+    "notify_url": "https://stellarsmart.cn/wanxiang/api/wechat/pay/notify",  # 回调地址(必须https)
+    "apiclient_key_path": key_path,      # 商户API私钥路径
+    "mch_serial_no": "4E4BC0E611B8DF18071DB8B5215CA305474CF931",                      # 商户证书序列号
+    "apiV3_key": "8ze4ou2eBmpnYbAYheThghA3ZDsv2Cgs",                              # APIv3密钥(用于解密回调)
+    "wechat_cert_path": None,        # 微信平台证书路径(验签用)
+}
 
 
 
@@ -363,14 +388,18 @@ class WechatLoginHandler(LoggedRequestHandler):
         if login_type == "mobile":
             target_user = await User.aio_get_or_none(((User.mobile_openid == openid) | (User.wechat_unionid == unionid) ))
             if target_user:
-                pass
+                if not target_user.mobile_openid:
+                    target_user.mobile_openid = openid
+                    await target_user.aio_save()
             else:
                 target_user = User(wechat_unionid = unionid,mobile_openid = openid,ref_code = generate_unique_invite_code())
                 await target_user.aio_save()
         else:
             target_user = await User.aio_get_or_none(((User.web_openid == openid) | (User.wechat_unionid == unionid) ))
             if target_user:
-                pass
+                if not target_user.web_openid:
+                    target_user.web_openid = openid
+                    await target_user.aio_save()
             else:
                 target_user = User(wechat_unionid = unionid,web_openid = openid,ref_code = generate_unique_invite_code())
                 await target_user.aio_save()     
@@ -472,6 +501,13 @@ class WithdrawHandler(LoggedRequestHandler):
             openid = body.get("openid")
             amount = body.get("amount")
 
+            
+            if openid:
+                if login_type == "mobile":
+                    user = await User.aio_get_or_none(User.mobile_openid == openid)
+                else:
+                    user = await User.aio_get_or_none(User.web_openid == openid)
+
             if not openid or not amount:
                 self.write_json({"success": False, "msg": "缺少必要参数"})
                 return
@@ -483,8 +519,17 @@ class WithdrawHandler(LoggedRequestHandler):
                 client_id = "web_app"
                 app_id = WX_OPEN_APP_ID
 
-            raw_result = transfer_to_openid(openid=openid, amount=amount, client_id=client_id)
+            out_bill_no = generate_out_trade_no()
+            raw_result = transfer_to_openid(openid=openid, amount=amount, out_bill_no=out_bill_no,client_id=client_id,notify_url=WECHAT_PAY_CONFIG["notify_url"])
             logger.info(f"转账结果: {raw_result}")
+            ## 创建订单
+            newOrder =Order(
+                out_trade_no = out_bill_no,
+                amount=amount,
+                order_name = "提现",
+                user_id = user.id
+            )
+            await newOrder.aio_save(force_insert=True)
 
             if isinstance(raw_result, tuple):
                 success, result = raw_result
@@ -515,33 +560,14 @@ class WithdrawHandler(LoggedRequestHandler):
                 })
 
         except Exception as e:
+            logger.error(traceback.format_exc())
             logger.error(f"提现接口异常: {e}")
             self.write_json({"success": False, "msg": f"服务器异常: {str(e)}"})
 
 
 
 
-logger = logging.getLogger(__name__)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-key_path = os.path.join(os.path.join(current_dir,"wxpay"),"apiclient_key.pem")
 
-
-
-# ============================================================
-# 配置 - 请替换为你的真实配置
-# ============================================================
-WECHAT_PAY_CONFIG = {
-    "appid": "wx50afdd19b43f590e",           # 公众号 AppID
-    "mchid": "1648741001",                # 商户号
-    "notify_url": "https://stellarsmart.cn/wanxiang/api/wechat/pay/notify",  # 回调地址(必须https)
-    "apiclient_key_path": key_path,      # 商户API私钥路径
-    "mch_serial_no": "4E4BC0E611B8DF18071DB8B5215CA305474CF931",                      # 商户证书序列号
-    "apiV3_key": "8ze4ou2eBmpnYbAYheThghA3ZDsv2Cgs",                              # APIv3密钥(用于解密回调)
-    "wechat_cert_path": None,        # 微信平台证书路径(验签用)
-}
-
-# 商品价格（单位：分）
-PRODUCT_PRICE_FEN = 990  # ¥9.9 = 990分
 
 
 # ============================================================
@@ -769,7 +795,6 @@ class PayNotifyHandler(LoggedRequestHandler):
         try:
             notify_data = json.loads(self.request.body)
             logger.info(f"收到微信支付回调: {notify_data}")
-
             # 解密通知内容
             resource = notify_data.get("resource", {})
             plaintext = decrypt_aes_gcm(
@@ -777,37 +802,55 @@ class PayNotifyHandler(LoggedRequestHandler):
                 ciphertext=resource["ciphertext"],
                 associated_data=resource.get("associated_data", ""),
             )
-
+            
             payment_info = json.loads(plaintext)
-            out_trade_no = payment_info["out_trade_no"]
-            trade_state = payment_info["trade_state"]
+            logger.info(payment_info)
+            if notify_data["event_type"] == "MCHTRANSFER.BILL.FINISHED":
+                state =  payment_info["state"]
+                out_trade_no = payment_info["out_bill_no"]
+                target_order = await Order.aio_get_or_none(Order.out_trade_no == out_trade_no)
+                if target_order:
+                    if state == "SUCCESS" and target_order.status!="SUCCESS":
+                        target_order.status = state
+                        target_order.transaction_id = payment_info["transfer_bill_no"]
+                        await target_order.aio_save()
+                        target_user = await User.aio_get_or_none(User.id == target_order.user_id)
+                        if target_user:
+                            origin_balance = target_user.balance
+                            new_balance = origin_balance - payment_info["transfer_amount"]
+                            target_user.balance = new_balance
+                            await target_user.aio_save()
 
-            logger.info(f"支付结果: order={out_trade_no}, state={trade_state}")
 
-            target_order = await Order.aio_get_or_none(Order.out_trade_no == out_trade_no)
-            if target_order:
-                target_order.status = trade_state
-                if trade_state == "SUCCESS":
-                    target_order.transaction_id = payment_info.get("transaction_id", "")
-                    target_order.pay_time = payment_info.get("success_time", "")
-                    # TODO: 这里可以触发生成报告、发送通知等业务逻辑
-                    logger.info(f"订单支付成功: {out_trade_no}")
-                
-                await target_order.aio_save()
-                if target_order.ref_code:
-                      ref_user = await User.aio_get_or_none(User.ref_code == target_order.ref_code)
-                      if ref_user:
-                          # 查询产品的佣金比例（如果有的话）
-                          # 这里简化用45%，你也可以从Product表查
-                          commission_rate = 45
-                          price = target_order.amount
-                          commission_fen = price * commission_rate / 100
-                          commission_yuan = round(commission_fen / 100)
-                          commission_final = commission_yuan * 100  # 分
-                
-                          ref_user.balance = (ref_user.balance or 0) + commission_final
-                          ref_user.total_earned = (ref_user.total_earned or 0) + commission_final  # ← 新增
-                          await ref_user.aio_save()
+            if  notify_data["event_type"] == "TRANSACTION.SUCCESS":
+                out_trade_no = payment_info["out_trade_no"]
+                trade_state = payment_info["trade_state"]
+
+                logger.info(f"支付结果: order={out_trade_no}, state={trade_state}")
+                target_order = await Order.aio_get_or_none(Order.out_trade_no == out_trade_no)
+                if target_order:
+                    target_order.status = trade_state
+                    if trade_state == "SUCCESS" and target_order.status!="SUCCESS":
+                        target_order.transaction_id = payment_info.get("transaction_id", "")
+                        target_order.pay_time = payment_info.get("success_time", "")
+                        # TODO: 这里可以触发生成报告、发送通知等业务逻辑
+                        logger.info(f"订单支付成功: {out_trade_no}")
+                    
+                    await target_order.aio_save()
+                    if target_order.ref_code:
+                        ref_user = await User.aio_get_or_none(User.ref_code == target_order.ref_code)
+                        if ref_user:
+                            # 查询产品的佣金比例（如果有的话）
+                            # 这里简化用45%，你也可以从Product表查
+                            commission_rate = 45
+                            price = target_order.amount
+                            commission_fen = price * commission_rate / 100
+                            commission_yuan = round(commission_fen / 100)
+                            commission_final = commission_yuan * 100  # 分
+                    
+                            ref_user.balance = (ref_user.balance or 0) + commission_final
+                            ref_user.total_earned = (ref_user.total_earned or 0) + commission_final  # ← 新增
+                            await ref_user.aio_save()
 
                                                 
 
@@ -1146,6 +1189,196 @@ class GetRefPriceHandler(LoggedRequestHandler):
         })
 
 
+class OrderListHandler(LoggedRequestHandler):
+
+    async def get(self):
+        openid = self.get_argument("openid", "")
+        login_type = self.get_argument("login_type", "mobile")
+        page = max(int(self.get_argument("page", "1")), 1)
+        page_size = min(max(int(self.get_argument("page_size", "15")), 1), 50)
+        offset = (page - 1) * page_size
+
+        if not openid:
+            self.write_json({"success": False, "msg": "缺少openid"})
+            return
+
+        # 查找用户
+        if login_type == "mobile":
+            user = await User.aio_get_or_none(User.mobile_openid == openid)
+        else:
+            user = await User.aio_get_or_none(User.web_openid == openid)
+
+        if not user:
+            self.write_json({"success": True, "orders": [], "total": 0, "has_more": False})
+            return
+
+        ref_code = user.ref_code
+        if not ref_code:
+            self.write_json({"success": True, "orders": [], "total": 0, "has_more": False})
+            return
+
+        try:
+            # 总数：通过我的推广码成交的订单（排除提现记录）
+            total = await (Order
+                .select(fn.COUNT(Order.id))
+                .where(
+                    Order.ref_code == ref_code,
+                    Order.status == 'SUCCESS',
+                    Order.order_name != '提现'
+                )
+                .aio_scalar()) or 0
+
+            # 分页查询
+            rows = await (Order
+                .select()
+                .where(
+                    Order.ref_code == ref_code,
+                    Order.status == 'SUCCESS',
+                    Order.order_name != '提现'
+                )
+                .order_by(Order.id.desc())
+                .offset(offset)
+                .limit(page_size)
+                .aio_execute())
+
+            orders = []
+            for o in rows:
+                # 计算佣金（和 PayNotifyHandler 中的逻辑保持一致）
+                commission_rate = 45  # 默认佣金比例
+                price = o.amount or 0
+                commission_fen = price * commission_rate / 100
+                commission_yuan = round(commission_fen / 100)
+                commission_final = commission_yuan * 100  # 分
+
+                # 获取购买者昵称（可选）
+                buyer_nickname = ""
+                if o.user_id:
+                    try:
+                        buyer = await User.aio_get_or_none(User.id == o.user_id)
+                        if buyer:
+                            buyer_nickname = buyer.nickname or ""
+                    except Exception:
+                        pass
+
+                # 格式化时间
+                pay_time_str = ""
+                if o.pay_time:
+                    if isinstance(o.pay_time, str):
+                        pay_time_str = o.pay_time
+                    else:
+                        pay_time_str = o.pay_time.strftime('%Y-%m-%d %H:%M:%S')
+                elif hasattr(o, 'created_at') and o.created_at:
+                    pay_time_str = o.created_at.strftime('%Y-%m-%d %H:%M:%S')
+
+                orders.append({
+                    "id": o.id,
+                    "order_no": o.out_trade_no,
+                    "product_name": o.order_name or "未知产品",
+                    "product_icon": "📦",
+                    "paid_amount": int(o.amount or 0),       # 分
+                    "commission": int(commission_final),       # 分
+                    "commission_rate": commission_rate,
+                    "paid_at": pay_time_str,
+                    "buyer_nickname": buyer_nickname,
+                })
+
+            self.write_json({
+                "success": True,
+                "orders": orders,
+                "total": int(total),
+                "has_more": (offset + page_size) < int(total),
+            })
+
+        except Exception as e:
+            logger.error(f"获取订单列表失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": "服务器错误"})
+
+
+# ============================================================
+#  提现记录（仅返回成功的提现）
+#  GET /wanxiang/api/withdrawals?openid=xxx&login_type=mobile&page=1&page_size=15
+# ============================================================
+class WithdrawalListHandler(LoggedRequestHandler):
+
+    async def get(self):
+        openid = self.get_argument("openid", "")
+        login_type = self.get_argument("login_type", "mobile")
+        page = max(int(self.get_argument("page", "1")), 1)
+        page_size = min(max(int(self.get_argument("page_size", "15")), 1), 50)
+        offset = (page - 1) * page_size
+
+        if not openid:
+            self.write_json({"success": False, "msg": "缺少openid"})
+            return
+
+        # 查找用户
+        if login_type == "mobile":
+            user = await User.aio_get_or_none(User.mobile_openid == openid)
+        else:
+            user = await User.aio_get_or_none(User.web_openid == openid)
+
+        if not user:
+            self.write_json({"success": True, "withdrawals": [], "total": 0, "has_more": False})
+            return
+
+        try:
+            # 总数：该用户的成功提现记录
+            total = await (Order
+                .select(fn.COUNT(Order.id))
+                .where(
+                    Order.user_id == user.id,
+                    Order.order_name == '提现',
+                    Order.status == 'SUCCESS'
+                )
+                .aio_scalar()) or 0
+
+            # 分页查询
+            rows = await (Order
+                .select()
+                .where(
+                    Order.user_id == user.id,
+                    Order.order_name == '提现',
+                    Order.status == 'SUCCESS'
+                )
+                .order_by(Order.id.desc())
+                .offset(offset)
+                .limit(page_size)
+                .aio_execute())
+
+            withdrawals = []
+            for o in rows:
+                # 格式化时间
+                created_str = ""
+                if hasattr(o, 'pay_time') and o.pay_time:
+                    if isinstance(o.pay_time, str):
+                        created_str = o.pay_time
+                    else:
+                        created_str = o.pay_time.strftime('%Y-%m-%d %H:%M:%S')
+                elif hasattr(o, 'created_at') and o.created_at:
+                    created_str = o.created_at.strftime('%Y-%m-%d %H:%M:%S')
+
+                withdrawals.append({
+                    "id": o.id,
+                    "order_no": o.out_trade_no,
+                    "amount": int(o.amount or 0),  # 分
+                    "status": "success",
+                    "created_at": created_str,
+                })
+
+            self.write_json({
+                "success": True,
+                "withdrawals": withdrawals,
+                "total": int(total),
+                "has_more": (offset + page_size) < int(total),
+            })
+
+        except Exception as e:
+            logger.error(f"获取提现记录失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": "服务器错误"})
+
+
 # 应用路由
 def make_app():
     return tornado.web.Application([
@@ -1163,6 +1396,8 @@ def make_app():
         (r"/wanxiang/api/products", ProductListHandler),
           (r"/wanxiang/api/user/set_price", SetUserPriceHandler),
           (r"/wanxiang/api/product/ref_price", GetRefPriceHandler),
+            (r"/wanxiang/api/orders", OrderListHandler),           # 新增
+        (r"/wanxiang/api/withdrawals", WithdrawalListHandler), # 新增
         
     ], **settings)
 

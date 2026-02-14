@@ -145,7 +145,7 @@ def init_client_transfer_records(client_id):
         }
 
 def transfer_to_openid(openid, amount, client_id=DEFAULT_CLIENT, out_bill_no=None, 
-                      transfer_remark="转账", user_name=None, auto_split=True):
+                      transfer_remark="转账", user_name=None, auto_split=True,notify_url=None):
     """
     向指定openid转账（区分客户端）
     
@@ -210,7 +210,7 @@ def transfer_to_openid(openid, amount, client_id=DEFAULT_CLIENT, out_bill_no=Non
         
         # 直接转账（金额在限额内）
         if amount_float <= client_limits["single_transfer"]:
-            return execute_single_transfer(client_id, openid, amount_float, out_bill_no, transfer_remark, user_name)
+            return execute_single_transfer(client_id, openid, amount_float, out_bill_no, transfer_remark, user_name,notify_url=notify_url)
         else:
             return False, {
                 "error": f"单笔转账金额{amount_float}元超过{client_limits['single_transfer']}元限额",
@@ -262,7 +262,7 @@ def split_and_transfer(client_id, openid, total_amount, out_bill_no=None,
             current_amount = round(base_amount, 2)
         
         # 生成商户单号
-        current_out_bill_no = f"{batch_prefix}_{i+1:03d}"
+        current_out_bill_no = generate_out_bill_no()
         
         # 生成明细备注
         current_remark = f"{transfer_remark} ({i+1}/{num_transfers})"
@@ -327,7 +327,7 @@ def split_and_transfer(client_id, openid, total_amount, out_bill_no=None,
     }
 
 def execute_single_transfer(client_id, openid, amount, out_bill_no=None, 
-                           transfer_remark="转账", user_name=None):
+                           transfer_remark="转账", user_name=None,notify_url=None):
     """
     执行单笔转账
     
@@ -371,6 +371,8 @@ def execute_single_transfer(client_id, openid, amount, out_bill_no=None,
                 "info_type": "报酬说明",
                 "info_content": "推广佣金"
             }]
+            ,
+            notify_url = notify_url
         )
         
         print(f"客户端 '{client_id}' 转账结果 - code: {code}, message: {message}")
