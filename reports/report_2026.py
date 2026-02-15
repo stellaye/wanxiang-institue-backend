@@ -22,6 +22,99 @@ import aiohttp
 from openai import AsyncOpenAI
 from typing import AsyncGenerator, Dict, Any, Callable
 
+
+class BaziElementCalculator:
+    def __init__(self):
+        # 天干五行属性
+        self.tian_gan_element = {
+            '甲': 'wood', '乙': 'wood',
+            '丙': 'fire', '丁': 'fire',
+            '戊': 'earth', '己': 'earth',
+            '庚': 'metal', '辛': 'metal',
+            '壬': 'water', '癸': 'water'
+        }
+        
+        # 地支五行属性（本气）
+        self.di_zhi_element = {
+            '子': 'water', '丑': 'earth', '寅': 'wood', '卯': 'wood',
+            '辰': 'earth', '巳': 'fire', '午': 'fire', '未': 'earth',
+            '申': 'metal', '酉': 'metal', '戌': 'earth', '亥': 'water'
+        }
+        
+        # 地支藏干映射
+        self.hidden_gan = {
+            '子': ['癸'],
+            '丑': ['己', '癸', '辛'],
+            '寅': ['甲', '丙', '戊'],
+            '卯': ['乙'],
+            '辰': ['戊', '乙', '癸'],
+            '巳': ['丙', '庚', '戊'],
+            '午': ['丁', '己'],
+            '未': ['己', '丁', '乙'],
+            '申': ['庚', '壬', '戊'],
+            '酉': ['辛'],
+            '戌': ['戊', '辛', '丁'],
+            '亥': ['壬', '甲']
+        }
+
+    def calculate_element_distribution(self, year_pillar, month_pillar, day_pillar, hour_pillar):
+        """
+        计算五行分布
+        输入格式：四柱八字，如 ('甲子', '乙丑', '丙寅', '丁卯')
+        """
+        # 初始化五行分布
+        element_distribution = {
+            "wood": {"count": 0, "status": ""},
+            "fire": {"count": 0, "status": ""},
+            "earth": {"count": 0, "status": ""},
+            "metal": {"count": 0, "status": ""},
+            "water": {"count": 0, "status": ""}
+        }
+        
+        pillars = [year_pillar, month_pillar, day_pillar, hour_pillar]
+        
+        for pillar in pillars:
+            tian_gan = pillar[0]  # 天干
+            di_zhi = pillar[1]    # 地支
+            
+            # 统计天干
+            if tian_gan in self.tian_gan_element:
+                element = self.tian_gan_element[tian_gan]
+                element_distribution[element]["count"] += 1
+            
+            # 统计地支藏干
+            if di_zhi in self.hidden_gan:
+                for hidden in self.hidden_gan[di_zhi]:
+                    if hidden in self.tian_gan_element:
+                        element = self.tian_gan_element[hidden]
+                        element_distribution[element]["count"] += 1
+        
+        # 计算状态（旺相休囚死）- 简化版
+        self._calculate_status(element_distribution)
+        
+        return element_distribution
+    
+    def _calculate_status(self, element_distribution):
+        """计算五行状态（简化版）"""
+        max_count = max(v["count"] for v in element_distribution.values())
+        
+        for element, data in element_distribution.items():
+            if data["count"] == 0:
+                data["status"] = "无"
+            elif data["count"] == max_count:
+                data["status"] = "旺"
+            elif data["count"] >= max_count * 0.7:
+                data["status"] = "相"
+            elif data["count"] >= max_count * 0.4:
+                data["status"] = "休"
+            elif data["count"] >= max_count * 0.1:
+                data["status"] = "囚"
+            else:
+                data["status"] = "死"
+
+
+
+
 # ============================================================
 # 配置
 # ============================================================
@@ -97,7 +190,7 @@ COMMON_OUTPUT_RULES = """
 PROMPT_FOUNDATION = """
 你是一位精通中国传统命理学的资深八字命理分析师。
 请根据用户提供的八字、性别和当前大运，完成【八字基础解析】和【2026丙午年年度总评】。
-
+年度关键字要参考十神组合关系,比如丙午为财,那么可以说财星代表的意象
 """ + BAZI_ANALYSIS_GUIDE + COMMON_OUTPUT_RULES + """
 
 ## 输出 JSON 结构
@@ -161,8 +254,8 @@ PROMPT_FOUNDATION = """
   "yearly_fortune_overall": {
     "score": 75,
     "level": "上吉/吉/中吉/平/中凶/凶/大凶",
-    "keyword": "年度主题词",
-    "summary": { "text": "300字以内年度总评", "bazi_explanation": "" },
+    "keyword": "年度关键词（请你铁口直断）",
+    "summary": { "text": "150字以内年度总评", "bazi_explanation": "" },
     "highlights": [ { "text": "", "bazi_explanation": "" } ],
     "warnings": [ { "text": "", "bazi_explanation": "" } ]
   }
@@ -181,7 +274,7 @@ PROMPT_CAREER = """
   "section": "career",
   "career": {
     "score": 0,
-    "summary": { "text": "事业运通俗分析300字以内", "bazi_explanation": "" },
+    "summary": { "text": "事业运通俗分析150字以内", "bazi_explanation": "" },
     "opportunities": [ { "text": "", "bazi_explanation": "" } ],
     "risks": [ { "text": "", "bazi_explanation": "" } ],
     "advice": { "text": "", "bazi_explanation": "" },
@@ -202,7 +295,7 @@ PROMPT_WEALTH = """
   "section": "wealth",
   "wealth": {
     "score": 0,
-    "summary": { "text": "财运通俗分析300字以内", "bazi_explanation": "" },
+    "summary": { "text": "财运通俗分析150字以内", "bazi_explanation": "" },
     "regular_income": { "trend": "上升/平稳/下降", "text": "", "bazi_explanation": "" },
     "windfall": { "trend": "上升/平稳/下降", "text": "", "bazi_explanation": "" },
     "loss_risk": { "level": "高/中/低", "text": "", "bazi_explanation": "" },
@@ -223,7 +316,7 @@ PROMPT_LOVE = """
   "section": "love",
   "love": {
     "score": 0,
-    "summary": { "text": "感情运通俗分析300字以内", "bazi_explanation": "" },
+    "summary": { "text": "感情运通俗分析150字以内", "bazi_explanation": "" },
     "single_advice": { "text": "", "bazi_explanation": "" },
     "relationship_advice": { "text": "", "bazi_explanation": "" },
     "peach_blossom": {
@@ -246,7 +339,7 @@ PROMPT_HEALTH = """
   "section": "health",
   "health": {
     "score": 0,
-    "summary": { "text": "健康运通俗分析300字以内", "bazi_explanation": "" },
+    "summary": { "text": "健康运通俗分析150字以内", "bazi_explanation": "" },
     "risk_areas": [ { "text": "", "bazi_explanation": "" } ],
     "advice": { "text": "", "bazi_explanation": "" },
     "caution_months": []
@@ -266,12 +359,12 @@ PROMPT_STUDY_RELATIONS = """
   "section": "study_relations",
   "study": {
     "score": 0,
-    "summary": { "text": "学业运通俗分析300字以内", "bazi_explanation": "" },
+    "summary": { "text": "学业运通俗分析150字以内", "bazi_explanation": "" },
     "advice": { "text": "", "bazi_explanation": "" }
   },
   "relationships": {
     "score": 0,
-    "summary": { "text": "人际关系通俗分析300字以内", "bazi_explanation": "" },
+    "summary": { "text": "人际关系通俗分析150字以内", "bazi_explanation": "" },
     "noble_direction": "",
     "villain_warning": { "text": "", "bazi_explanation": "" },
     "advice": { "text": "", "bazi_explanation": "" }
@@ -336,10 +429,11 @@ def make_single_month_prompt(m: int) -> str:
 你是一位精通中国传统命理学的资深八字命理分析师。
 请根据用户提供的八字、性别和当前大运，专门分析【2026丙午年{m}月（农历{ln}，月柱{sb}）的月度运势】。
 
-重点分析该月月柱{sb}与命局四柱、流年丙午、当前大运之间的干支互动关系。
+重点分析该月月柱{sb}与命局四柱、流年丙午、当前大运之间的干支互动关系,月度关键字要参考十神组合关系。
 
 {BAZI_ANALYSIS_GUIDE}
 {COMMON_OUTPUT_RULES}
+打分时你客观一点,希望你铁口直断
 
 ## 输出 JSON 结构
 
@@ -350,7 +444,7 @@ def make_single_month_prompt(m: int) -> str:
   "stem_branch": "{sb}",
   "solar_range": "公历起止日期（请根据2026年节气推算）",
   "score": 0,
-  "keyword": "月度主题词（2-4字）",
+  "keyword": "月度主题词（请你铁口直断)",
   "summary": {{
     "text": "月度运势通俗概述150字以内",
     "bazi_explanation": "该月干支与命局及流年的互动分析"
@@ -529,6 +623,19 @@ async def generate_full_report(
     print(f"\n✅ 全部完成! {len(SECTIONS)}路并行, 总耗时: {total_elapsed:.1f}s")
 
     report = merge_report(results)
+    calculator = BaziElementCalculator()
+    bazi_list = bazi_str.split(" ")
+    # 示例：输入四柱八字
+    # 年柱 月柱 日柱 时柱
+    year_pillar = bazi_list[0]
+    month_pillar = bazi_list[1]
+    day_pillar = bazi_list[2]
+    hour_pillar = bazi_list[3]
+    result = calculator.calculate_element_distribution(
+        year_pillar, month_pillar, day_pillar, hour_pillar
+    )
+    for item in report["bazi_chart"]["element_distribution"]:
+        report["bazi_chart"]["element_distribution"][item]["count"] = result[item]["count"]
     return report
 
 
@@ -566,6 +673,7 @@ def merge_report(results: Dict[str, dict]) -> dict:
         "annual_advice": results.get("lucky", {}).get("annual_advice", {}),
         "disclaimer": results.get("lucky", {}).get("disclaimer", ""),
     }
+
     return report
 
 

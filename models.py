@@ -247,10 +247,10 @@ class Report(BaseModel):
     
     # 八字信息
     bazi_str = CharField(max_length=64, default="")               # "癸酉 己未 辛丑 戊子"
-    birth_info_json = TextField(default="{}")                      # 原始出生信息JSON
+    birth_info_json = CharField(null=True)                     # 原始出生信息JSON
     
     # 报告内容
-    report_json = TextField(default="")                            # 完整报告JSON（可能很大）
+    report_json = CharField(null=True)                          # 完整报告JSON（可能很大）
     
     # 状态
     status = CharField(max_length=20, default="pending")           # pending/generating/completed/failed

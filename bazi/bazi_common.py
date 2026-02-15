@@ -8,6 +8,7 @@ import json
 import traceback
 from consts.jieqi import jieqi_days
 import copy
+import math
 
 jieqi_names = [
     "立春",
@@ -3853,6 +3854,45 @@ def get_earthly_branch_time(born_time):
         return "戌时"
     elif 21 <= hour < 23:
         return "亥时"
+
+
+def get_solar_time(date_time, longitude: float, timezone: float) -> datetime:
+    # 如果传入的 date_time 是字符串格式，自动转换为 datetime 对象
+    if isinstance(date_time, str):
+        try:
+            if date_time.count(":") == 1:
+                date_time = datetime.strptime(date_time, "%Y-%m-%d %H:%M")
+            else:
+                date_time = datetime.strptime(date_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            raise ValueError("日期时间格式应为 'YYYY-MM-DD HH:MM:SS'")
+
+    if not isinstance(timezone, float):
+        timezone = float(timezone)
+
+    year = date_time.year
+    day_of_year = (date_time - datetime(date_time.year, 1, 1)).days + 1
+
+    # 计算 theta 和 deltaT
+    N0 = 79.6764 + 0.2422 * (year - 1985) - int(0.25 * (year - 1985))
+    theta = 2 * math.pi * (day_of_year - N0) / 365.2422
+    deltaT = (
+        0.0028
+        - 1.9857 * math.sin(theta)
+        + 9.9059 * math.sin(2 * theta)
+        - 7.0924 * math.cos(theta)
+        - 0.6882 * math.cos(2 * theta)
+    )
+
+    # 根据传入的 float 时区值计算 shiQu
+    shiQu = timezone * 15  # 时区每小时对应15度经度
+
+    # 计算平太阳时
+    ping = (longitude - shiQu) * 4  # 每度经度差异对应4分钟
+    zheng = date_time + timedelta(seconds=int(ping * 60 + deltaT * 60))
+
+    return zheng
+
 
 
 def get_full_bazi_info(born_time, gender, timezone, born_lon, yunshi_time=None):

@@ -105,6 +105,38 @@ class LoggedRequestHandler(tornado.web.RequestHandler):
         self.write_json({"success": False, "msg": msg})
 
 
+    def set_default_headers(self):
+        origin = self.request.headers.get("Origin")
+        if origin:
+            self.set_header("Access-Control-Allow-Origin", origin)
+        self.set_header("Access-Control-Allow-Credentials", "true")
+        self.set_header(
+            "Access-Control-Allow-Headers", "x-requested-with, Content-Type, x-session-id"
+        )
+        self.set_header(
+            "Access-Control-Allow-Methods", "POST, GET, OPTIONS, PATCH, PUT, DELETE"
+            )
+    # def set_default_headers(self):
+    #    self.set_header("Content-Type", "application/json")
+
+    def success_response(self, data=None):
+        """成功返回"""
+        self.write({"result": data})
+
+    def error_response(self, status_code, error_code, msg=""):
+        """错误返回
+        :param status_code: HTTP状态码
+        :param error_code: 业务错误码，使用 ErrorCode 中定义的值
+        """
+        self.set_status(status_code)
+        self.write({"error_code": error_code, "msg": msg})
+
+    def options(self):
+        # 预检请求应该返回相同的头部
+        self.set_default_headers()
+        self.set_status(204)
+        self.finish()
+
 # 全局缓存 jsapi_ticket
 jsapi_ticket_cache = {"ticket": "", "expires_at": 0}
 
@@ -1476,6 +1508,7 @@ class GenerateReportHandler(LoggedRequestHandler):
     async def post(self):
         try:
             body = json.loads(self.request.body)
+
             order_no = body.get("order_no", "")
             birth_info = body.get("birth_info", {})
 
@@ -1546,55 +1579,72 @@ class GenerateReportHandler(LoggedRequestHandler):
             self.write_json({"success": False, "msg": str(e)})
 
     def _calc_bazi(self, birth_info):
-        """
-        根据用户出生信息计算八字
-        返回 (bazi_str, gender, current_dayun)
-        """
-        from datetime import datetime as dt
+            """
+            根据用户出生信息计算八字
+            返回 (bazi_str, gender, current_dayun)
 
+            前端时辰 value 对照：
+            '00-01' → 早子时 (凌晨0-1点)   → hour=0
+            '01-03' → 丑时                  → hour=2
+            '03-05' → 寅时                  → hour=4
+            ...
+            '21-23' → 亥时                  → hour=22
+            '23-00' → 晚子时 (夜晚23-0点)  → 前端已将日期+1，并转为 '23-01' 传入
+            '23-01' → 晚子时（前端转换后）  → hour=0
+            """
+            from datetime import datetime as dt
 
-        year = int(birth_info.get("year", 1990))
-        month = int(birth_info.get("month", 1))
-        day = int(birth_info.get("day", 1))
-        hour_str = birth_info.get("hour", "unknown")
-        gender_str = birth_info.get("gender", "男")
-        gender = 1 if gender_str == "男" else 0
+            year = int(birth_info.get("year", 1990))
+            month = int(birth_info.get("month", 1))
+            day = int(birth_info.get("day", 1))
+            hour_str = birth_info.get("hour", "unknown")
+            gender_str = birth_info.get("gender", "男")
+            gender = 1 if gender_str == "男" else 0
 
-        # 时辰转换为具体小时
-        if hour_str == "unknown":
-            hour = 12  # 默认午时
-            minute = 0
-        else:
-            # hour_str 格式: "09-11" 取中间值
-            parts = hour_str.split("-")
-            h_start = int(parts[0])
-            h_end = int(parts[1]) if len(parts) > 1 else h_start + 2
-            hour = (h_start + h_end) // 2
-            minute = 0
+            # 时辰转换为具体小时
+            if hour_str == "unknown":
+                hour = 12  # 默认午时
+                minute = 0
+            elif hour_str in ("23-01", "23-00"):
+                # 子时：晚子时(23-01)由前端日期已+1，早子时不存在这个值
+                # 排盘用 hour=0 代表子时
+                hour = 23
+                minute = 30
+            elif hour_str == "00-01":
+                # 早子时：凌晨 0:00-1:00，日期不变
+                hour = 0
+                minute = 0
+            else:
+                # 其他时辰: "01-03", "03-05", ... "21-23"
+                parts = hour_str.split("-")
+                h_start = int(parts[0])
+                h_end = int(parts[1]) if len(parts) > 1 else h_start + 2
+                hour = (h_start + h_end) // 2
+                minute = 0
 
-        born_time = dt(year, month, day, hour, minute)
-        # 2026年用于计算大运
-        yunshi_time = dt(2026, 6, 1, 12, 0)
+            born_time = dt(year, month, day, hour, minute)
+            # 2026年用于计算大运
+            yunshi_time = dt(2026, 6, 1, 12, 0)
 
-        bazi_info = get_bazi_natal_info(
-            born_time=born_time,
-            gender=gender,
-            timezoneOffset=8,
-            born_lon=116.4,  # 默认北京经度
-            yunshi_time=yunshi_time,
-        )
+            bazi_info = get_bazi_natal_info(
+                born_time=born_time,
+                gender=gender,
+                timezoneOffset=8,
+                born_lon=116.4,  # 默认北京经度
+                yunshi_time=yunshi_time,
+            )
 
-        bazi_str = (
-            f"{bazi_info['niangan']}{bazi_info['nianzhi']} "
-            f"{bazi_info['yuegan']}{bazi_info['yuezhi']} "
-            f"{bazi_info['rigan']}{bazi_info['rizhi']} "
-            f"{bazi_info['shigan']}{bazi_info['shizhi']}"
-        )
+            bazi_str = (
+                f"{bazi_info['niangan']}{bazi_info['nianzhi']} "
+                f"{bazi_info['yuegan']}{bazi_info['yuezhi']} "
+                f"{bazi_info['rigan']}{bazi_info['rizhi']} "
+                f"{bazi_info['shigan']}{bazi_info['shizhi']}"
+            )
 
-        dayun = bazi_info.get("dayun_wuxing", "未知")
-        gender_label = "男" if gender == 1 else "女"
+            dayun = bazi_info.get("dayun_wuxing", "未知")
+            gender_label = "男" if gender == 1 else "女"
 
-        return bazi_str, gender_label, dayun
+            return bazi_str, gender_label, dayun
 
     async def _run_generation(self, report_id, bazi_str, gender, current_dayun):
         """异步运行19路并行生成"""
@@ -1733,6 +1783,179 @@ class UserReportsHandler(LoggedRequestHandler):
 
 
 
+EXCLUDED_UNIONIDS = {"o9uaq6Hhb1j9vOwO8CkLrEmLHzBE"}
+
+
+class AdminStatsHandler(LoggedRequestHandler):
+    """
+    GET /wanxiang/api/admin/stats?days=30
+    返回运营统计数据：
+    - 每日订单数 & 金额
+    - 总收入 / 总佣金 / 待提现
+    - 订单明细列表
+    """
+
+    async def get(self):
+        days = int(self.get_argument("days", "30"))
+        page = max(int(self.get_argument("page", "1")), 1)
+        page_size = min(max(int(self.get_argument("page_size", "50")), 1), 200)
+        offset = (page - 1) * page_size
+
+        try:
+            # 1) 找出所有测试用户的 user_id
+            excluded_users = await (User
+                .select(User.id)
+                .where(User.wechat_unionid.in_(EXCLUDED_UNIONIDS))
+                .aio_execute())
+            excluded_ids = {u.id for u in excluded_users}
+
+            # 2) 基础条件: 支付成功 & 非提现 & 排除测试用户
+            base_where = [
+                Order.status == 'SUCCESS',
+                Order.order_name != '提现',
+            ]
+            if excluded_ids:
+                base_where.append(Order.user_id.not_in(excluded_ids))
+
+            # 3) 总计统计
+            total_count = await (Order
+                .select(fn.COUNT(Order.out_trade_no))
+                .where(*base_where)
+                .aio_scalar()) or 0
+
+            total_amount = await (Order
+                .select(fn.SUM(Order.amount))
+                .where(*base_where)
+                .aio_scalar()) or 0
+
+            # 4) 每日统计 (最近N天)
+            cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+            date_expr = fn.DATE(Order.pay_time)
+
+            daily_rows = await (Order
+                .select(
+                    date_expr.alias('date'),
+                    fn.COUNT(Order.out_trade_no).alias('count'),
+                    fn.SUM(Order.amount).alias('amount')
+                )
+                .where(*base_where, Order.pay_time >= cutoff)
+                .group_by(date_expr)
+                .order_by(date_expr.desc())
+                .aio_execute())
+
+            daily_stats = []
+            for r in daily_rows:
+                daily_stats.append({
+                    "date": str(r.date) if hasattr(r, 'date') else "",
+                    "count": int(r.count) if r.count else 0,
+                    "amount": int(r.amount) if r.amount else 0,
+                })
+
+            # 5) 佣金统计: 所有有 ref_code 的成功订单产生的佣金
+            commission_rows = await (Order
+                .select(Order.amount, Order.ref_code)
+                .where(
+                    *base_where,
+                    Order.ref_code.is_null(False),
+                    Order.ref_code != ''
+                )
+                .aio_execute())
+
+            total_commission = 0
+            for o in commission_rows:
+                price = o.amount or 0
+                c_fen = price * 45 / 100
+                c_yuan = round(c_fen / 100)
+                total_commission += c_yuan * 100
+
+            # 6) 待提现总额: 所有用户 balance 之和 (排除测试)
+            balance_where = []
+            if excluded_ids:
+                balance_where.append(User.id.not_in(excluded_ids))
+
+            if balance_where:
+                pending_withdrawal = await (User
+                    .select(fn.SUM(User.balance))
+                    .where(*balance_where)
+                    .aio_scalar()) or 0
+            else:
+                pending_withdrawal = await (User
+                    .select(fn.SUM(User.balance))
+                    .aio_scalar()) or 0
+
+            # 7) 按价格分组统计（哪个价格卖得最多）
+            price_rows = await (Order
+                .select(
+                    Order.amount,
+                    fn.COUNT(Order.out_trade_no).alias('count'),
+                    fn.SUM(Order.amount).alias('total')
+                )
+                .where(*base_where)
+                .group_by(Order.amount)
+                .order_by(fn.COUNT(Order.out_trade_no).desc())
+                .aio_execute())
+
+            price_distribution = []
+            for r in price_rows:
+                price_distribution.append({
+                    "price": int(r.amount),
+                    "count": int(r.count) if r.count else 0,
+                    "total": int(r.total) if r.total else 0,
+                })
+
+            # 8) 订单明细 (分页)
+            detail_query = (Order
+                .select()
+                .where(*base_where)
+                .order_by(Order.pay_time.desc())
+                .offset(offset)
+                .limit(page_size))
+
+            rows = await detail_query.aio_execute()
+
+            orders = []
+            for o in rows:
+                # 佣金
+                commission = 0
+                if o.ref_code:
+                    c_fen = (o.amount or 0) * 45 / 100
+                    commission = round(c_fen / 100) * 100
+
+                pay_time_str = ""
+                if o.pay_time and isinstance(o.pay_time, datetime.datetime):
+                    pay_time_str = o.pay_time.strftime('%Y-%m-%d %H:%M:%S')
+
+                orders.append({
+                    "order_no": o.out_trade_no,
+                    "order_name": o.order_name or "",
+                    "amount": int(o.amount or 0),
+                    "commission": commission,
+                    "ref_code": o.ref_code or "",
+                    "status": o.status,
+                    "pay_time": pay_time_str,
+                    "user_id": o.user_id,
+                })
+
+            self.write_json({
+                "success": True,
+                "summary": {
+                    "total_count": int(total_count),
+                    "total_amount": int(total_amount),
+                    "total_commission": int(total_commission),
+                    "pending_withdrawal": int(float(pending_withdrawal) * 100) if pending_withdrawal else 0,
+                },
+                "daily_stats": daily_stats,
+                "price_distribution": price_distribution,
+                "orders": orders,
+                "total": int(total_count),
+                "has_more": (offset + page_size) < int(total_count),
+            })
+
+        except Exception as e:
+            logger.error(f"获取运营统计失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": str(e)})
+
 
 
 # 应用路由
@@ -1758,6 +1981,7 @@ def make_app():
     (r"/wanxiang/api/report/generate", GenerateReportHandler),
     (r"/wanxiang/api/report/status", ReportStatusHandler),
     (r"/wanxiang/api/reports", UserReportsHandler),
+    (r"/wanxiang/api/admin/stats", AdminStatsHandler),
         
     ], **settings)
 
