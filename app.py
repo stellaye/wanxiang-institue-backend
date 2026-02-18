@@ -36,7 +36,7 @@ import traceback
 from reports.report_2026 import generate_full_report
 from bazi.bazi_common import get_bazi_natal_info
 import asyncio
-
+import json
 
 logger = logging.getLogger(__name__)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1299,6 +1299,8 @@ class ProductListHandler(LoggedRequestHandler):
                 "custom_price": custom,             # 用户自定义价格，null表示未设置
                 "active_price": active_price,       # 当前生效价格
                 "commission": commission,            # 当前佣金(分)
+                "promotion_texts": json.loads(prod.promotion_texts),
+                "preview_images": json.loads(prod.preview_images)
             })
 
         self.write_json({
@@ -1735,6 +1737,35 @@ class ReportStatusHandler(LoggedRequestHandler):
             "sections": {},
         })
 
+class ReportDemoHandler(LoggedRequestHandler):
+    """
+    GET /wanxiang/api/report/demo?product=2026-yearly-report
+    返回: { "success": true, "report": {...} }
+    """
+    async def get(self):
+        # 获取product参数
+        product = self.get_argument("product")  # 例如: 2026-yearly-report
+        
+        try:
+            # 读取对应的demo文件
+            with open(f'demo/{product}.json', 'r', encoding='utf-8') as f:
+                report_data = json.load(f)
+            
+            # 返回前端期望的格式
+            self.write_json({
+                "success": True,
+                "report": report_data  # 把文件内容放到report字段中
+            })
+        except FileNotFoundError:
+            self.write_json({
+                "success": False,
+                "message": f"Demo file {product} not found"
+            })
+        except Exception as e:
+            self.write_json({
+                "success": False,
+                "message": str(e)
+            })
 
 # ============================================================
 # 4. 用户历史报告列表
@@ -1980,6 +2011,7 @@ def make_app():
          (r"/wanxiang/api/report", GetReportHandler),
     (r"/wanxiang/api/report/generate", GenerateReportHandler),
     (r"/wanxiang/api/report/status", ReportStatusHandler),
+    (r"/wanxiang/api/report/demo", ReportDemoHandler),
     (r"/wanxiang/api/reports", UserReportsHandler),
     (r"/wanxiang/api/admin/stats", AdminStatsHandler),
         

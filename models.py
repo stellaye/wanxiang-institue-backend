@@ -219,6 +219,8 @@ class Product(BaseModel):
     commission_rate = IntegerField(default=45, verbose_name='佣金比例%')
     is_active = BooleanField(default=True, verbose_name='是否上架')
     created_time = DateTimeField(default=datetime.datetime.now)
+    promotion_texts = CharField(null=True) 
+    preview_images = CharField(null=True)
 
     class Meta:
         table_name = 'product'
