@@ -37,6 +37,7 @@ from reports.report_2026 import generate_full_report
 from bazi.bazi_common import get_bazi_natal_info
 import asyncio
 import json
+from cons.constellation_calculate import CalculateConstellationRelation
 
 logger = logging.getLogger(__name__)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1300,7 +1301,7 @@ class ProductListHandler(LoggedRequestHandler):
                 "active_price": active_price,       # 当前生效价格
                 "commission": commission,            # 当前佣金(分)
                 "promotion_texts": json.loads(prod.promotion_texts),
-                "preview_images": json.loads(prod.preview_images)
+                "preview_images": json.loads(prod.preview_images) if prod.preview_images else []
             })
 
         self.write_json({
@@ -1775,6 +1776,7 @@ class UserReportsHandler(LoggedRequestHandler):
     GET /wanxiang/api/reports?openid=xxx&login_type=mobile
     返回用户所有已完成的报告列表
     """
+# 在 UserReportsHandler 的 get 方法中，查报告时关联订单获取 order_name
     async def get(self):
         openid = self.get_argument("openid", "")
         login_type = self.get_argument("login_type", "mobile")
@@ -1797,15 +1799,27 @@ class UserReportsHandler(LoggedRequestHandler):
                     Report.status, Report.created_at)
             .where(Report.user_id == user.id, Report.status == "completed")
             .order_by(Report.id.desc())
-            .limit(20)
+            .limit(50)
             .aio_execute())
 
         result = []
         for r in reports:
+            # 通过 order_no 查订单名称来判断类型
+            report_type = "yearly"  # 默认年运
+            order_name = ""
+            if r.order_no:
+                order = await Order.aio_get_or_none(Order.out_trade_no == r.order_no)
+                if order:
+                    order_name = order.order_name or ""
+                    if "灵签" in order_name or "观音" in order_name or "oracle" in order_name.lower():
+                        report_type = "oracle"
+
             result.append({
                 "report_id": r.id,
                 "order_no": r.order_no,
                 "bazi": r.bazi_str,
+                "report_type": report_type,  # "yearly" 或 "oracle"
+                "order_name": order_name,
                 "created_at": r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else "",
             })
 
@@ -1815,6 +1829,51 @@ class UserReportsHandler(LoggedRequestHandler):
 
 
 EXCLUDED_UNIONIDS = {"o9uaq6Hhb1j9vOwO8CkLrEmLHzBE"}
+
+
+class SaveOracleResultHandler(LoggedRequestHandler):
+    """
+    POST /wanxiang/api/oracle/save
+    Body: { "order_no": "xxx", "fortune_id": 42, "fortune_data": {...} }
+    """
+    async def post(self):
+        try:
+            body = json.loads(self.request.body)
+            order_no = body.get("order_no", "")
+            fortune_data = body.get("fortune_data", {})
+
+            if not order_no:
+                self.write_json({"success": False, "msg": "缺少 order_no"})
+                return
+
+            order = await Order.aio_get_or_none(Order.out_trade_no == order_no)
+            if not order or order.status != "SUCCESS":
+                self.write_json({"success": False, "msg": "订单未支付或不存在"})
+                return
+
+            # 检查是否已存在
+            existing = await Report.aio_get_or_none(Report.order_no == order_no)
+            if existing:
+                self.write_json({"success": True, "report_id": existing.id, "msg": "已存在"})
+                return
+
+            rpt = Report(
+                order_no=order_no,
+                user_id=order.user_id,
+                status="completed",
+                bazi_str=f"第{fortune_data.get('id', '?')}签 · {fortune_data.get('type', '')}",
+                report_json=json.dumps(fortune_data, ensure_ascii=False),
+                birth_info_json="{}",
+                created_at=datetime.datetime.now(),
+                completed_at=datetime.datetime.now(),
+            )
+            await rpt.aio_save(force_insert=True)
+
+            self.write_json({"success": True, "report_id": rpt.id})
+
+        except Exception as e:
+            logger.error(f"保存求签结果失败: {e}")
+            self.write_json({"success": False, "msg": str(e)})
 
 
 class AdminStatsHandler(LoggedRequestHandler):
@@ -2014,7 +2073,8 @@ def make_app():
     (r"/wanxiang/api/report/demo", ReportDemoHandler),
     (r"/wanxiang/api/reports", UserReportsHandler),
     (r"/wanxiang/api/admin/stats", AdminStatsHandler),
-        
+    (r"/wanxiang/api/oracle/save", SaveOracleResultHandler),
+    (r"/wanxiang/api/cons_relation", CalculateConstellationRelation),
     ], **settings)
 
 # 启动应用
