@@ -27,12 +27,13 @@ import traceback
 import sxtwl
 from consts.ganzhi import Zhi
 from logger import logger
-from cons_common import (
+from cons.cons_common import (
     benmin_cons_list,
     all_cons,
     relation_dict,
     calculate_zhiri_constellation,
 )
+from base_handler import LoggedRequestHandler
 
 
 # ── 中文角色 → 前端 role key 映射 ──

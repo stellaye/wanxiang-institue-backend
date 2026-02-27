@@ -264,3 +264,20 @@ class Report(BaseModel):
 
     class Meta:
         table_name = 'reports'
+
+
+class Feedback(BaseModel):
+    """用户反馈/纠错表"""
+    id = AutoField()
+    page = CharField(max_length=64, index=True)
+    category_id = CharField(max_length=64, default="")
+    article_index = IntegerField(default=0)
+    article_title = CharField(max_length=200, default="")
+    feedback_type = CharField(max_length=20, default="correction")
+    content = TextField()
+    contact = CharField(max_length=200, default="")
+    user_agent = CharField(max_length=500, default="")
+    created_at = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        table_name = 'feedback'
