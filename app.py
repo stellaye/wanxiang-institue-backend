@@ -39,7 +39,7 @@ import asyncio
 import json
 from cons.constellation_calculate import CalculateConstellationRelation
 from base_handler import LoggedRequestHandler
-from feedback_handler import SubmitFeedbackHandler
+from feedback_handler import SubmitFeedbackHandler, AdminFeedbackListHandler
 
 logger = logging.getLogger(__name__)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2003,6 +2003,7 @@ def make_app():
     (r"/wanxiang/api/report/demo", ReportDemoHandler),
     (r"/wanxiang/api/reports", UserReportsHandler),
     (r"/wanxiang/api/admin/stats", AdminStatsHandler),
+    (r"/wanxiang/api/admin/feedback", AdminFeedbackListHandler),
     (r"/wanxiang/api/oracle/save", SaveOracleResultHandler),
     (r"/wanxiang/api/cons_relation", CalculateConstellationRelation),
     (r"/wanxiang/api/feedback", SubmitFeedbackHandler),

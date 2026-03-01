@@ -1,6 +1,7 @@
 import json
 import datetime
 import logging
+from peewee import fn
 from base_handler import LoggedRequestHandler
 from models import Feedback
 
@@ -50,3 +51,79 @@ class SubmitFeedbackHandler(LoggedRequestHandler):
         except Exception as e:
             logger.error(f"提交反馈失败: {e}")
             self.write_json({"success": False, "msg": "提交失败，请稍后重试"})
+
+
+class AdminFeedbackListHandler(LoggedRequestHandler):
+    """GET /wanxiang/api/admin/feedback?page=1&page_size=20&feedback_type=correction"""
+
+    async def get(self):
+        try:
+            page = max(int(self.get_argument("page", "1")), 1)
+            page_size = min(max(int(self.get_argument("page_size", "20")), 1), 200)
+        except Exception:
+            self.write_json({"success": False, "msg": "分页参数格式错误"})
+            return
+
+        feedback_type = (self.get_argument("feedback_type", "") or "").strip()
+        page_key = (self.get_argument("page_key", "") or "").strip()
+        category_id = (self.get_argument("category_id", "") or "").strip()
+
+        where = []
+        if feedback_type in ("correction", "suggestion"):
+            where.append(Feedback.feedback_type == feedback_type)
+        if page_key:
+            where.append(Feedback.page == page_key)
+        if category_id:
+            where.append(Feedback.category_id == category_id)
+
+        try:
+            total = await (
+                Feedback
+                .select(fn.COUNT(Feedback.id))
+                .where(*where)
+                .aio_scalar()
+            ) or 0
+
+            offset = (page - 1) * page_size
+            rows = await (
+                Feedback
+                .select()
+                .where(*where)
+                .order_by(Feedback.created_at.desc(), Feedback.id.desc())
+                .offset(offset)
+                .limit(page_size)
+                .aio_execute()
+            )
+
+            feedbacks = []
+            for row in rows:
+                created_at = ""
+                if row.created_at and isinstance(row.created_at, datetime.datetime):
+                    created_at = row.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                elif row.created_at:
+                    created_at = str(row.created_at)
+
+                feedbacks.append({
+                    "id": int(row.id),
+                    "page": row.page or "",
+                    "category_id": row.category_id or "",
+                    "article_index": int(row.article_index or 0),
+                    "article_title": row.article_title or "",
+                    "feedback_type": row.feedback_type or "correction",
+                    "content": row.content or "",
+                    "contact": row.contact or "",
+                    "user_agent": row.user_agent or "",
+                    "created_at": created_at,
+                })
+
+            self.write_json({
+                "success": True,
+                "feedbacks": feedbacks,
+                "total": int(total),
+                "page": page,
+                "page_size": page_size,
+                "has_more": (offset + page_size) < int(total),
+            })
+        except Exception as e:
+            logger.error(f"获取反馈列表失败: {e}")
+            self.write_json({"success": False, "msg": "获取反馈列表失败，请稍后重试"})
