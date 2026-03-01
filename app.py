@@ -40,6 +40,7 @@ import json
 from cons.constellation_calculate import CalculateConstellationRelation
 from base_handler import LoggedRequestHandler
 from feedback_handler import SubmitFeedbackHandler, AdminFeedbackListHandler
+from commission_utils import create_referral_chain, distribute_multi_level_commission, get_referral_chain, validate_commission_rate
 
 logger = logging.getLogger(__name__)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -153,17 +154,9 @@ class PayNotifyHandler(LoggedRequestHandler):
 
                     await target_order.aio_save()
 
-                    if trade_state == "SUCCESS" and old_status != "SUCCESS" and target_order.ref_code:
-                        ref_user = await User.aio_get_or_none(User.ref_code == target_order.ref_code)
-                        if ref_user:
-                            commission_rate = 45
-                            price = target_order.amount
-                            commission_fen = price * commission_rate / 100
-                            commission_yuan = round(commission_fen / 100)
-                            commission_final = commission_yuan * 100
-                            ref_user.balance = (ref_user.balance or 0) + commission_final
-                            ref_user.total_earned = (ref_user.total_earned or 0) + commission_final
-                            await ref_user.aio_save()
+                    if trade_state == "SUCCESS" and old_status != "SUCCESS":
+                        # 使用多级佣金分配
+                        await distribute_multi_level_commission(target_order)
 
             self.set_status(200)
             self.write({"code": "SUCCESS", "message": "成功"})
@@ -703,6 +696,7 @@ class WechatLoginHandler(LoggedRequestHandler):
             body = json.loads(self.request.body)
             code = body.get("code")
             login_type = body.get("login_type", "mobile")  # 默认mobile
+            ref_code = body.get("ref_code")  # 推荐码
         except (json.JSONDecodeError, TypeError):
             self.write_error_json("请求参数格式错误")
             return
@@ -728,6 +722,7 @@ class WechatLoginHandler(LoggedRequestHandler):
         refresh_token = token_data.get("refresh_token", "")
         unionid = token_data.get("unionid", "")
         logger.info(f"Get Token info:{token_data}")
+        is_new_user = False
         if login_type == "mobile":
             target_user = await User.aio_get_or_none(((User.mobile_openid == openid) | (User.wechat_unionid == unionid) ))
             if target_user:
@@ -735,8 +730,9 @@ class WechatLoginHandler(LoggedRequestHandler):
                     target_user.mobile_openid = openid
                     await target_user.aio_save()
             else:
-                target_user = User(wechat_unionid = unionid,mobile_openid = openid,ref_code = generate_unique_invite_code())
+                target_user = User(wechat_unionid = unionid,mobile_openid = openid,ref_code = generate_unique_invite_code(), referred_by = ref_code if ref_code else None)
                 await target_user.aio_save()
+                is_new_user = True
         else:
             target_user = await User.aio_get_or_none(((User.web_openid == openid) | (User.wechat_unionid == unionid) ))
             if target_user:
@@ -744,8 +740,11 @@ class WechatLoginHandler(LoggedRequestHandler):
                     target_user.web_openid = openid
                     await target_user.aio_save()
             else:
-                target_user = User(wechat_unionid = unionid,web_openid = openid,ref_code = generate_unique_invite_code())
-                await target_user.aio_save()     
+                target_user = User(wechat_unionid = unionid,web_openid = openid,ref_code = generate_unique_invite_code(), referred_by = ref_code if ref_code else None)
+                await target_user.aio_save()
+                is_new_user = True
+
+        # 不在注册时建立推广关系，等用户真正开始推广时再建立     
 
         # 第二步：用 access_token 获取用户信息
         user_info = await self._get_user_info(access_token, openid)
@@ -1203,6 +1202,15 @@ class ProductListHandler(LoggedRequestHandler):
                 user = await User.aio_get_or_none(User.web_openid == openid)
 
             if user:
+                # 【新增】当用户访问推广页面时，自动激活为推广者并建立推广关系
+                if not user.is_promoter and user.referred_by:
+                    # 用户第一次访问推广页面，建立推广关系
+                    from commission_utils import create_referral_chain
+                    await create_referral_chain(user.id, user.referred_by)
+                    user.is_promoter = True
+                    await user.aio_save()
+                    logger.info(f"用户 {user.id} 激活为推广者，推荐人: {user.referred_by}")
+
                 # 查询该用户的所有自定义价格
                 price_records = await (UserProductPrice
                     .select()
@@ -1977,6 +1985,375 @@ class AdminStatsHandler(LoggedRequestHandler):
             self.write_json({"success": False, "msg": str(e)})
 
 
+class SetCommissionRateHandler(LoggedRequestHandler):
+    """设置下级佣金比例"""
+
+    async def post(self):
+        try:
+            body = json.loads(self.request.body)
+            openid = body.get("openid")
+            login_type = body.get("login_type", "mobile")
+            child_ref_code = body.get("child_ref_code")
+            commission_rate = float(body.get("commission_rate", 20.0))
+
+            if not openid or not child_ref_code:
+                self.write_json({"success": False, "msg": "缺少必要参数"})
+                return
+
+            # 获取当前用户
+            if login_type == "mobile":
+                user = await User.aio_get_or_none(User.mobile_openid == openid)
+            else:
+                user = await User.aio_get_or_none(User.web_openid == openid)
+
+            if not user:
+                self.write_json({"success": False, "msg": "用户不存在"})
+                return
+
+            # 获取下级用户
+            child_user = await User.aio_get_or_none(User.ref_code == child_ref_code)
+            if not child_user:
+                self.write_json({"success": False, "msg": "下级用户不存在"})
+                return
+
+            # 验证佣金比例
+            is_valid, error_msg = await validate_commission_rate(user.id, child_user.id, commission_rate)
+            if not is_valid:
+                self.write_json({"success": False, "msg": error_msg})
+                return
+
+            # 更新或创建佣金配置
+            from models import CommissionConfig
+            config = await CommissionConfig.aio_get_or_none(
+                CommissionConfig.parent_user_id == user.id,
+                CommissionConfig.child_user_id == child_user.id
+            )
+
+            if config:
+                config.commission_rate = commission_rate
+                config.updated_time = datetime.datetime.now()
+                await config.aio_save()
+            else:
+                await CommissionConfig.aio_create(
+                    parent_user_id=user.id,
+                    child_user_id=child_user.id,
+                    commission_rate=commission_rate
+                )
+
+            self.write_json({"success": True, "msg": "设置成功"})
+
+        except Exception as e:
+            logger.error(f"设置佣金比例失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": str(e)})
+
+
+class GetSubordinatesHandler(LoggedRequestHandler):
+    """获取下级列表"""
+
+    async def get(self):
+        try:
+            openid = self.get_argument("openid", "")
+            login_type = self.get_argument("login_type", "mobile")
+            level = int(self.get_argument("level", "0"))  # 0=所有，1=直接下级，2=二级下级
+
+            if not openid:
+                self.write_json({"success": False, "msg": "缺少openid"})
+                return
+
+            # 获取当前用户
+            if login_type == "mobile":
+                user = await User.aio_get_or_none(User.mobile_openid == openid)
+            else:
+                user = await User.aio_get_or_none(User.web_openid == openid)
+
+            if not user:
+                self.write_json({"success": False, "msg": "用户不存在"})
+                return
+
+            # 获取下级列表
+            from models import ReferralChain, CommissionConfig, CommissionRecord
+
+            if level == 1:
+                # 只获取直接下级
+                chains = await ReferralChain.select().where(
+                    ReferralChain.parent_user_id == user.id
+                ).aio_execute()
+            else:
+                # 获取所有下级（ancestor_path包含当前用户ID）
+                chains = await ReferralChain.select().where(
+                    ReferralChain.ancestor_path.contains(f"/{user.id}/")
+                ).aio_execute()
+
+                if level == 2:
+                    # 过滤出二级下级
+                    chains = [c for c in chains if c.level == 2]
+
+            subordinates = []
+            for chain in chains:
+                sub_user = await User.aio_get_or_none(User.id == chain.user_id)
+                if not sub_user:
+                    continue
+
+                # 获取佣金配置
+                config = await CommissionConfig.aio_get_or_none(
+                    CommissionConfig.parent_user_id == chain.parent_user_id,
+                    CommissionConfig.child_user_id == chain.user_id
+                )
+
+                # 统计订单和佣金
+                total_orders = await Order.select().where(
+                    Order.ref_code == sub_user.ref_code,
+                    Order.status == 'SUCCESS'
+                ).aio_count()
+
+                total_commission = await CommissionRecord.select(
+                    fn.SUM(CommissionRecord.commission_amount)
+                ).where(
+                    CommissionRecord.user_id == user.id,
+                    CommissionRecord.order_no.in_(
+                        Order.select(Order.out_trade_no).where(
+                            Order.ref_code == sub_user.ref_code
+                        )
+                    )
+                ).aio_scalar() or 0
+
+                subordinates.append({
+                    "user_id": sub_user.id,
+                    "nickname": sub_user.nickname or f"用户{sub_user.id}",
+                    "ref_code": sub_user.ref_code,
+                    "level": chain.level,
+                    "commission_rate": float(config.commission_rate) if config else 20.0,
+                    "total_orders": total_orders,
+                    "total_commission": int(total_commission)
+                })
+
+            self.write_json({
+                "success": True,
+                "subordinates": subordinates
+            })
+
+        except Exception as e:
+            logger.error(f"获取下级列表失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": str(e)})
+
+
+class GetCommissionRecordsHandler(LoggedRequestHandler):
+    """获取佣金明细"""
+
+    async def get(self):
+        try:
+            openid = self.get_argument("openid", "")
+            login_type = self.get_argument("login_type", "mobile")
+            page = max(int(self.get_argument("page", "1")), 1)
+            page_size = min(max(int(self.get_argument("page_size", "20")), 1), 50)
+            offset = (page - 1) * page_size
+
+            if not openid:
+                self.write_json({"success": False, "msg": "缺少openid"})
+                return
+
+            # 获取当前用户
+            if login_type == "mobile":
+                user = await User.aio_get_or_none(User.mobile_openid == openid)
+            else:
+                user = await User.aio_get_or_none(User.web_openid == openid)
+
+            if not user:
+                self.write_json({"success": False, "msg": "用户不存在"})
+                return
+
+            # 获取佣金记录
+            from models import CommissionRecord
+
+            total = await CommissionRecord.select().where(
+                CommissionRecord.user_id == user.id
+            ).aio_count()
+
+            records = await CommissionRecord.select().where(
+                CommissionRecord.user_id == user.id
+            ).order_by(CommissionRecord.created_time.desc()).limit(page_size).offset(offset).aio_execute()
+
+            record_list = []
+            for record in records:
+                record_list.append({
+                    "order_no": record.order_no,
+                    "order_amount": record.order_amount,
+                    "commission_amount": record.commission_amount,
+                    "commission_rate": float(record.commission_rate),
+                    "level": record.level,
+                    "created_time": record.created_time.strftime("%Y-%m-%d %H:%M:%S")
+                })
+
+            self.write_json({
+                "success": True,
+                "records": record_list,
+                "total": total,
+                "has_more": (offset + page_size) < total
+            })
+
+        except Exception as e:
+            logger.error(f"获取佣金明细失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": str(e)})
+
+
+class GetReferralChainHandler(LoggedRequestHandler):
+    """获取推广链信息"""
+
+    async def get(self):
+        try:
+            openid = self.get_argument("openid", "")
+            login_type = self.get_argument("login_type", "mobile")
+
+            if not openid:
+                self.write_json({"success": False, "msg": "缺少openid"})
+                return
+
+            # 获取当前用户
+            if login_type == "mobile":
+                user = await User.aio_get_or_none(User.mobile_openid == openid)
+            else:
+                user = await User.aio_get_or_none(User.web_openid == openid)
+
+            if not user:
+                self.write_json({"success": False, "msg": "用户不存在"})
+                return
+
+            # 获取推广链
+            chain = await get_referral_chain(user.id)
+
+            # 获取当前用户的层级
+            from models import ReferralChain
+            user_chain = await ReferralChain.aio_get_or_none(ReferralChain.user_id == user.id)
+            my_level = user_chain.level if user_chain else 0
+
+            self.write_json({
+                "success": True,
+                "chain": chain,
+                "my_level": my_level
+            })
+
+        except Exception as e:
+            logger.error(f"获取推广链失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write_json({"success": False, "msg": str(e)})
+
+
+class BaziCalculateHandler(tornado.web.RequestHandler):
+    """八字排盘接口"""
+
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.set_header("Access-Control-Allow-Headers", "Content-Type")
+
+    async def options(self):
+        self.set_status(204)
+        self.finish()
+
+    async def post(self):
+        try:
+            data = json.loads(self.request.body)
+
+            # 获取参数
+            year = data.get("year")
+            month = data.get("month")
+            day = data.get("day")
+            hour = data.get("hour")
+            gender = data.get("gender", "male")
+            use_solar_time = data.get("useSolarTime", False)
+            city = data.get("city")
+
+            # 参数验证
+            if not all([year, month, day, hour is not None]):
+                self.write(json.dumps({
+                    "success": False,
+                    "msg": "缺少必要参数"
+                }, ensure_ascii=False))
+                return
+
+            # 如果使用真太阳时，必须提供城市信息
+            if use_solar_time and not city:
+                self.write(json.dumps({
+                    "success": False,
+                    "msg": "使用真太阳时需要提供出生地信息"
+                }, ensure_ascii=False))
+                return
+
+            # 构建出生时间（时辰转换为小时）
+            hour_map = {
+                0: 23, 1: 1, 2: 3, 3: 5, 4: 7, 5: 9,
+                6: 11, 7: 13, 8: 15, 9: 17, 10: 19, 11: 21
+            }
+            actual_hour = hour_map.get(int(hour), 0)
+
+            born_time_str = f"{year}-{month:02d}-{day:02d} {actual_hour:02d}:00"
+
+            # 性别转换（0=女，1=男）
+            gender_value = 1 if gender == "male" else 0
+
+            # 经纬度和时区
+            longitude = float(city.get("lng", 120)) if city else 120
+            timezone = 8  # 中国时区
+
+            # 调用八字计算函数
+            bazi_info = get_bazi_natal_info(
+                born_time=born_time_str,
+                gender=gender_value,
+                timezoneOffset=timezone,
+                born_lon=longitude,
+                yunshi_time=None,
+                cal_solar=use_solar_time
+            )
+
+            # 构建返回结果
+            result = {
+                "success": True,
+                "data": {
+                    "pillars": {
+                        "year": {
+                            "gan": bazi_info["niangan"],
+                            "zhi": bazi_info["nianzhi"]
+                        },
+                        "month": {
+                            "gan": bazi_info["yuegan"],
+                            "zhi": bazi_info["yuezhi"]
+                        },
+                        "day": {
+                            "gan": bazi_info["rigan"],
+                            "zhi": bazi_info["rizhi"]
+                        },
+                        "hour": {
+                            "gan": bazi_info["shigan"],
+                            "zhi": bazi_info["shizhi"]
+                        }
+                    },
+                    "wuxing": bazi_info.get("wuxing_count", {
+                        "金": 0, "木": 0, "水": 0, "火": 0, "土": 0
+                    }),
+                    "dayMaster": f"{bazi_info['rigan']}{bazi_info.get('rigan_wuxing', '')}",
+                    "useSolarTime": use_solar_time,
+                    "city": city.get("fullName") if city else None
+                }
+            }
+
+            # 如果使用了真太阳时，添加提示信息
+            if use_solar_time and city:
+                offset = (longitude - 120) * 4
+                result["data"]["timeNote"] = f"已使用真太阳时校正（{city.get('fullName')}，时差{'+' if offset > 0 else ''}{int(offset)}分钟）"
+
+            self.write(json.dumps(result, ensure_ascii=False))
+
+        except Exception as e:
+            logger.error(f"八字排盘失败: {e}")
+            logger.error(traceback.format_exc())
+            self.write(json.dumps({
+                "success": False,
+                "msg": f"计算失败: {str(e)}"
+            }, ensure_ascii=False))
+
 
 # 应用路由
 def make_app():
@@ -2007,6 +2384,11 @@ def make_app():
     (r"/wanxiang/api/oracle/save", SaveOracleResultHandler),
     (r"/wanxiang/api/cons_relation", CalculateConstellationRelation),
     (r"/wanxiang/api/feedback", SubmitFeedbackHandler),
+    (r"/wanxiang/api/commission/set_rate", SetCommissionRateHandler),
+    (r"/wanxiang/api/commission/subordinates", GetSubordinatesHandler),
+    (r"/wanxiang/api/commission/records", GetCommissionRecordsHandler),
+    (r"/wanxiang/api/commission/chain", GetReferralChainHandler),
+    (r"/wanxiang/api/bazi/calculate", BaziCalculateHandler),
     ], **settings)
 
 # 启动应用

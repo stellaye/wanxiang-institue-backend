@@ -190,6 +190,8 @@ class User(BaseModel):
     updated_time = DateTimeField(default=datetime.datetime.now, verbose_name='更新时间')
     ref_code = CharField(max_length=100, null=True, verbose_name='邀请码')
     total_earned = DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name='累计收益(分)')
+    referred_by = CharField(max_length=100, null=True, verbose_name='推荐人的ref_code（注册时记录）')
+    is_promoter = BooleanField(default=False, verbose_name='是否已成为推广者')
 
     class Meta:
         table_name = 'user'
@@ -281,3 +283,48 @@ class Feedback(BaseModel):
 
     class Meta:
         table_name = 'feedback'
+
+
+class ReferralChain(BaseModel):
+    """推广关系链表"""
+    id = BigAutoField(primary_key=True)
+    user_id = BigIntegerField(unique=True, index=True, verbose_name='用户ID')
+    parent_user_id = BigIntegerField(null=True, index=True, verbose_name='直接上级用户ID')
+    ancestor_path = CharField(max_length=1000, default='/', verbose_name='祖先路径 /1/5/12/')
+    level = IntegerField(default=0, verbose_name='层级，0表示顶级')
+    created_time = DateTimeField(default=datetime.datetime.now)
+    updated_time = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        table_name = 'referral_chain'
+
+
+class CommissionConfig(BaseModel):
+    """佣金配置表"""
+    id = BigAutoField(primary_key=True)
+    parent_user_id = BigIntegerField(index=True, verbose_name='上级用户ID')
+    child_user_id = BigIntegerField(index=True, verbose_name='下级用户ID')
+    commission_rate = DecimalField(max_digits=5, decimal_places=2, default=20.00, verbose_name='给下级的佣金比例%')
+    created_time = DateTimeField(default=datetime.datetime.now)
+    updated_time = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        table_name = 'commission_config'
+        indexes = (
+            (('parent_user_id', 'child_user_id'), True),
+        )
+
+
+class CommissionRecord(BaseModel):
+    """佣金分配记录表"""
+    id = BigAutoField(primary_key=True)
+    order_no = CharField(max_length=64, index=True, verbose_name='订单号')
+    user_id = BigIntegerField(index=True, verbose_name='获得佣金的用户ID')
+    level = IntegerField(verbose_name='在推广链中的层级')
+    commission_amount = IntegerField(verbose_name='佣金金额(分)')
+    commission_rate = DecimalField(max_digits=5, decimal_places=2, verbose_name='佣金比例%')
+    order_amount = IntegerField(verbose_name='订单金额(分)')
+    created_time = DateTimeField(default=datetime.datetime.now, index=True)
+
+    class Meta:
+        table_name = 'commission_record'
