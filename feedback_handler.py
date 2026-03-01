@@ -77,18 +77,18 @@ class AdminFeedbackListHandler(LoggedRequestHandler):
             where.append(Feedback.category_id == category_id)
 
         try:
-            total = await (
-                Feedback
-                .select(fn.COUNT(Feedback.id))
-                .where(*where)
-                .aio_scalar()
-            ) or 0
+            count_query = Feedback.select(fn.COUNT(Feedback.id))
+            list_query = Feedback.select()
+
+            if where:
+                count_query = count_query.where(*where)
+                list_query = list_query.where(*where)
+
+            total = await count_query.aio_scalar() or 0
 
             offset = (page - 1) * page_size
             rows = await (
-                Feedback
-                .select()
-                .where(*where)
+                list_query
                 .order_by(Feedback.created_at.desc(), Feedback.id.desc())
                 .offset(offset)
                 .limit(page_size)
