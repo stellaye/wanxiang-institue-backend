@@ -2262,6 +2262,7 @@ class BaziCalculateHandler(tornado.web.RequestHandler):
             month = data.get("month")
             day = data.get("day")
             hour = data.get("hour")
+            minute = data.get("minute", "00")
             gender = data.get("gender", "male")
             use_solar_time = data.get("useSolarTime", False)
             city = data.get("city")
@@ -2282,14 +2283,32 @@ class BaziCalculateHandler(tornado.web.RequestHandler):
                 }, ensure_ascii=False))
                 return
 
-            # 构建出生时间（时辰转换为小时）
-            hour_map = {
-                0: 23, 1: 1, 2: 3, 3: 5, 4: 7, 5: 9,
-                6: 11, 7: 13, 8: 15, 9: 17, 10: 19, 11: 21
-            }
-            actual_hour = hour_map.get(int(hour), 0)
+            # 解析时辰格式（如 "11-13" 或 "23-00"）
+            if isinstance(hour, str) and '-' in hour:
+                hour_range = hour.split('-')
+                actual_hour = int(hour_range[0])
+            elif isinstance(hour, int):
+                # 兼容旧格式（数字）
+                hour_map = {
+                    0: 23, 1: 1, 2: 3, 3: 5, 4: 7, 5: 9,
+                    6: 11, 7: 13, 8: 15, 9: 17, 10: 19, 11: 21
+                }
+                actual_hour = hour_map.get(hour, 0)
+            else:
+                # 尝试转换为整数
+                try:
+                    hour_int = int(hour)
+                    hour_map = {
+                        0: 23, 1: 1, 2: 3, 3: 5, 4: 7, 5: 9,
+                        6: 11, 7: 13, 8: 15, 9: 17, 10: 19, 11: 21
+                    }
+                    actual_hour = hour_map.get(hour_int, 0)
+                except ValueError:
+                    actual_hour = 0
 
-            born_time_str = f"{year}-{month:02d}-{day:02d} {actual_hour:02d}:00"
+            # 构建出生时间
+            actual_minute = int(minute) if minute else 0
+            born_time_str = f"{year}-{month:02d}-{day:02d} {actual_hour:02d}:{actual_minute:02d}"
 
             # 性别转换（0=女，1=男）
             gender_value = 1 if gender == "male" else 0
